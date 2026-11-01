@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.semantics.SemanticsActions
@@ -35,7 +36,8 @@ class MarkdownBodyUiTest {
     }
     private fun capture(name: String) {
         val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
-        val screenshot = instrumentation.uiAutomation.takeScreenshot()
+        // Capture our Compose surface without claiming Android's shared UiAutomation service.
+        val screenshot = compose.onRoot().captureToImage().asAndroidBitmap()
         java.io.File(instrumentation.targetContext.cacheDir, name).outputStream().use {
             screenshot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
         }
