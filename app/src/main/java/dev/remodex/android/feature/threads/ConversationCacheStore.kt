@@ -137,6 +137,7 @@ private fun encodeThreadSummary(value: ThreadSummary): JSONObject = JSONObject()
     .put("modelProvider", value.modelProvider)
     .put("parentThreadId", value.parentThreadId)
     .put("syncState", value.syncState.name)
+    .put("isAutomationThread", value.isAutomationThread)
     .put("desktopGroupId", value.desktopGroupId)
     .put("desktopGroupName", value.desktopGroupName)
     .put("desktopProjectRoot", value.desktopProjectRoot)
@@ -152,6 +153,7 @@ private fun decodeThreadSummary(json: JSONObject): ThreadSummary = ThreadSummary
     modelProvider = if (json.has("modelProvider") && !json.isNull("modelProvider")) json.getString("modelProvider") else null,
     parentThreadId = if (json.has("parentThreadId") && !json.isNull("parentThreadId")) json.getString("parentThreadId") else null,
     syncState = ThreadSyncState.valueOf(json.getString("syncState")),
+    isAutomationThread = json.optBoolean("isAutomationThread", false),
     desktopGroupId = if (json.has("desktopGroupId") && !json.isNull("desktopGroupId")) json.getString("desktopGroupId") else null,
     desktopGroupName = if (json.has("desktopGroupName") && !json.isNull("desktopGroupName")) json.getString("desktopGroupName") else null,
     desktopProjectRoot = if (json.has("desktopProjectRoot") && !json.isNull("desktopProjectRoot")) json.getString("desktopProjectRoot") else null,

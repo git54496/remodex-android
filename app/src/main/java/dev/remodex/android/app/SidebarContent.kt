@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.UnfoldLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.outlined.Cloud
@@ -100,12 +101,14 @@ fun SidebarContent(
     modifier: Modifier = Modifier,
 ) {
     var collapsedGroupIds by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
+    var automationOnly by rememberSaveable { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var showProjectPicker by remember { mutableStateOf(false) }
+    val eligibleThreads = if (automationOnly) threads.filter { it.isAutomationThread } else threads
     val filteredThreads = if (searchQuery.isBlank()) {
-        threads
+        eligibleThreads
     } else {
-        threads.filter {
+        eligibleThreads.filter {
             it.title.contains(searchQuery, ignoreCase = true)
                 || it.preview.contains(searchQuery, ignoreCase = true)
                 || it.projectPath.contains(searchQuery, ignoreCase = true)
@@ -142,6 +145,10 @@ fun SidebarContent(
                 color = Ink,
             )
             Spacer(Modifier.weight(1f))
+            IconButton(onClick = { automationOnly = !automationOnly }) {
+                Icon(Icons.Default.FilterList, contentDescription = if (automationOnly) "Show all conversations" else "Filter automation conversations",
+                    tint = if (automationOnly) MaterialTheme.colorScheme.primary else InkSecondary)
+            }
             IconButton(onClick = {
                 collapsedGroupIds = ArrayList(threads.map { it.desktopGroupId ?: it.projectPath }.distinct())
             }) {
@@ -366,6 +373,15 @@ fun SidebarContent(
             color = Divider,
             modifier = Modifier.padding(horizontal = 16.dp),
         )
+
+        if (automationOnly) {
+            Text(
+                text = if (filteredThreads.isEmpty()) "No automation conversations" else "Automation conversations",
+                style = MaterialTheme.typography.labelMedium,
+                color = InkSecondary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
 
         // Thread list with collapsible project groups
         LazyColumn(

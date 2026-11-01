@@ -74,6 +74,7 @@ data class ThreadSummary(
     val modelProvider: String? = null,
     val parentThreadId: String? = null,
     val syncState: ThreadSyncState = ThreadSyncState.Live,
+    val isAutomationThread: Boolean = false,
     val desktopGroupId: String? = null,
     val desktopGroupName: String? = null,
     val desktopProjectRoot: String? = null,

@@ -1867,6 +1867,7 @@ class RelayBootstrapService(
             id = id,
             title = title,
             projectPath = projectPath,
+            isAutomationThread = threadObject.optBoolean("isAutomationThread", false),
             desktopGroupId = readMeaningfulString(threadObject, "desktopGroupId"),
             desktopGroupName = readMeaningfulString(threadObject, "desktopGroupName"),
             desktopProjectRoot = readMeaningfulString(threadObject, "desktopProjectRoot"),

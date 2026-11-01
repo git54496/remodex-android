@@ -3,6 +3,25 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+function readAutomationThreadIds() {
+  const home = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+  const {execFileSync} = require('child_process');
+  const ids = new Set();
+  const sources = [
+    [path.join(home, 'sqlite', 'codex-dev.db'), 'SELECT thread_id FROM automation_runs;'],
+    // Legacy runs retain their structured automation envelope after run-table cleanup.
+    [path.join(home, 'state_5.sqlite'), "SELECT id FROM threads WHERE first_user_message GLOB 'Automation: *' AND instr(first_user_message, char(10) || 'Automation ID: ') > 0 AND instr(first_user_message, char(10) || 'Automation memory: ') > 0;"],
+  ];
+  for (const [database, query] of sources) {
+    if (!fs.existsSync(database)) continue;
+    const output = execFileSync(process.platform === 'darwin' ? '/usr/bin/sqlite3' : 'sqlite3',
+      ['-readonly', database, query],
+      {encoding: 'utf8', timeout: 3000, maxBuffer: 8 * 1024 * 1024});
+    for (const id of output.split('\n').filter(Boolean)) ids.add(id);
+  }
+  return ids;
+}
+
 function projectThreads(threads, state) {
   if (!state || typeof state['local-projects'] !== 'object' || !state['local-projects']) {
     throw new Error('Codex desktop project catalog is unavailable; refusing to show unfiltered history.');
@@ -31,7 +50,7 @@ function projectThreads(threads, state) {
   });
 }
 
-function createDesktopCatalog({enabled = process.env.REMODEX_DESKTOP_CATALOG === '1', readState = () =>
+function createDesktopCatalog({readAutomationIds = readAutomationThreadIds, enabled = process.env.REMODEX_DESKTOP_CATALOG === '1', readState = () =>
   JSON.parse(fs.readFileSync(path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), '.codex-global-state.json'), 'utf8'))} = {}) {
   const pending = new Map();
   return {
@@ -53,7 +72,10 @@ function createDesktopCatalog({enabled = process.env.REMODEX_DESKTOP_CATALOG ===
         const result = response.result;
         const key = ['data', 'items', 'threads'].find(k => Array.isArray(result?.[k]));
         if (!key) throw new Error('Unsupported thread list response');
-        result[key] = projectThreads(result[key], readState());
+        const automationIds = readAutomationIds();
+        result[key] = projectThreads(result[key], readState()).map(thread => ({
+          ...thread, isAutomationThread: automationIds.has(thread.id),
+        }));
         // Keep pagination intact even when this page is entirely filtered out.
         return JSON.stringify(response);
       } catch (error) {

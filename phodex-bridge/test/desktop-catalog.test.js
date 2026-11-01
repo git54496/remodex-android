@@ -14,7 +14,7 @@ test('only retained desktop projects, assignment beats cwd, projectless stays in
  assert.equal(list[2].desktopGroupName,'Chats');
 });
 test('request uses state database; filtering retains cursor and refreshes desktop state', () => {
- let current=state;const catalog=createDesktopCatalog({enabled:true,readState:()=>current});
+ let current=state;const catalog=createDesktopCatalog({enabled:true,readAutomationIds:()=>new Set(),readState:()=>current});
  assert.equal(JSON.parse(catalog.request(JSON.stringify({id:1,method:'thread/list',params:{cursor:'x'}}))).params.useStateDbOnly,true);
  const result=JSON.parse(catalog.response(JSON.stringify({id:1,result:{data:[{id:'gone',cwd:'/gone'}],nextCursor:'next'}})));
  assert.deepEqual(result.result.data,[]);assert.equal(result.result.nextCursor,'next');
@@ -22,7 +22,7 @@ test('request uses state database; filtering retains cursor and refreshes deskto
  assert.deepEqual(JSON.parse(catalog.response(JSON.stringify({id:2,result:{data:[{id:'yes',cwd:'/work/a'}]}}))).result.data,[]);
 });
 test('unreadable catalog fails closed, unrelated messages unchanged', () => {
- const catalog=createDesktopCatalog({enabled:true,readState:()=>{throw new Error('unavailable')}});
+ const catalog=createDesktopCatalog({enabled:true,readAutomationIds:()=>new Set(),readState:()=>{throw new Error('unavailable')}});
  catalog.request('{"id":1,"method":"thread/list"}');
  assert.equal(JSON.parse(catalog.response('{"id":1,"result":{"data":[]}}')).error.message,'unavailable');
  assert.equal(catalog.response('{"method":"turn/completed"}'),'{"method":"turn/completed"}');
@@ -32,4 +32,12 @@ test('legacy relay registers newest phone while multi-phone list retains all ide
  assert.equal(registration.trustedPhoneDeviceId,'new');assert.equal(registration.trustedPhonePublicKey,'new-key');
  assert.equal(registration.trustedPhones.length,2);
  assert.equal(buildMacRegistration({trustedPhones:{}}).trustedPhoneDeviceId,'');
+});
+
+test('automation membership uses run IDs, independent of title and retains normal threads', () => {
+ const catalog=createDesktopCatalog({enabled:true,readState:()=>state,readAutomationIds:()=>new Set(['yes'])});
+ catalog.request('{"id":9,"method":"thread/list"}');
+ const result=JSON.parse(catalog.response(JSON.stringify({id:9,result:{data:[{id:'yes',cwd:'/work/a',title:'ordinary'},{id:'moved',title:'scheduled task'}]}})));
+ assert.equal(result.result.data[0].isAutomationThread,true);
+ assert.equal(result.result.data[1].isAutomationThread,false);
 });
