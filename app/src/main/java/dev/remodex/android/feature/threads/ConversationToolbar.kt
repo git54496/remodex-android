@@ -1,6 +1,7 @@
 package dev.remodex.android.feature.threads
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -27,6 +28,7 @@ import dev.remodex.android.ui.theme.SignalGreen
 fun ConversationToolbar(
     title: String,
     status: ThreadStatus,
+    subtitle: String = "",
     onMenuClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -45,14 +47,12 @@ fun ConversationToolbar(
             )
         }
 
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            color = Ink,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = Ink,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (subtitle.isNotBlank()) Text(subtitle, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        }
 
         // Status badge
         val badgeColor = when (status) {

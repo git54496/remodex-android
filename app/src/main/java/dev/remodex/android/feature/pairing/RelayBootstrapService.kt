@@ -558,6 +558,19 @@ class RelayBootstrapService(
             ?: throw RelayBootstrapException("The bridge returned invalid ChatGPT history.")
     }
 
+    suspend fun readWorkspaceImage(path: String, cwd: String): ByteArray {
+        val session = requireActiveSession("Connect to your Mac to preview this image.")
+        val id = "workspace-image-${UUID.randomUUID()}"
+        val params = JSONObject().put("path", path).put("cwd", cwd)
+            .put("includeData", true).put("maxPixelDimension", 1600)
+        sendEncryptedAppPayload(session, JSONObject().put("id", id).put("method", "workspace/readImage").put("params", params).toString())
+        val response = awaitEncryptedRpcResponse(session, id, timeoutMs = 30_000L)
+        response.optJSONObject("error")?.let { throw RelayBootstrapException(it.optString("message")) }
+        val encoded = response.optJSONObject("result")?.optString("dataBase64")
+            ?.takeIf { it.isNotBlank() } ?: throw RelayBootstrapException("Image preview was unavailable.")
+        return android.util.Base64.decode(encoded, android.util.Base64.DEFAULT)
+    }
+
     suspend fun fetchThreadList(limit: Int? = null, archived: Boolean = false): List<ThreadSummary> {
         val session = requireActiveSession(
             "The secure session is not active yet. Reconnect before loading live threads.",
@@ -2533,7 +2546,8 @@ class RelayBootstrapService(
 
     private fun decodeTimelineEntryKind(normalizedType: String): TimelineEntryKind {
         return when {
-            normalizedType == "usermessage"
+            normalizedType in setOf("imageview", "imagegeneration", "imagegenerationcall", "imagegenerationend")
+                || normalizedType == "usermessage"
                 || normalizedType == "agentmessage"
                 || normalizedType == "assistantmessage"
                 || normalizedType == "message" -> TimelineEntryKind.Chat
@@ -2556,6 +2570,12 @@ class RelayBootstrapService(
         normalizedType: String,
         entryKind: TimelineEntryKind,
     ): String {
+        if (normalizedType in setOf("imageview", "imagegeneration", "imagegenerationcall", "imagegenerationend")) {
+            val path = listOf("saved_path", "savedPath", "path", "file_path")
+                .map { itemObject.optString(it) }.firstOrNull { it.isNotBlank() } ?: return ""
+            val escaped = path.replace("%", "%25").replace(">", "%3E").replace(")", "%29")
+            return "![Generated image](<$escaped>)"
+        }
         val directText = decodeTimelineText(itemObject)
         return when (entryKind) {
             TimelineEntryKind.Questions -> directText.ifBlank { "Questions" }
@@ -2621,7 +2641,7 @@ class RelayBootstrapService(
     private fun decodeTimelineSpeaker(itemObject: JSONObject, normalizedType: String): String {
         return when (normalizedType) {
             "usermessage" -> "You"
-            "agentmessage", "assistantmessage" -> "Codex"
+            "agentmessage", "assistantmessage", "imageview", "imagegeneration", "imagegenerationcall", "imagegenerationend" -> "Codex"
             "message" -> {
                 val role = itemObject.optString("role").lowercase(Locale.US)
                 if (role.contains("user")) "You" else "Codex"

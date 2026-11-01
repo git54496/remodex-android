@@ -20,7 +20,7 @@ class ConversationCacheTest {
 
     @Test fun completedTurnKeepsUserFinalAndArtifactsVisible() {
         val rows = projectTimeline(listOf(entry("u", speaker = "You"), entry("progress"), entry("tool", TimelineEntryKind.ToolActivity), entry("file", TimelineEntryKind.FileChange), entry("final")))
-        assertEquals(listOf("u", "previous-final", "file", "final"), rows.map { it.id })
+        assertEquals(listOf("u", "previous-final", "final", "changes-final"), rows.map { it.id })
         assertEquals(listOf("progress", "tool"), rows[1].entries.map { it.id })
     }
 

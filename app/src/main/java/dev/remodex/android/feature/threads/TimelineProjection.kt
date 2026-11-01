@@ -8,19 +8,26 @@ internal data class TimelineRow(
     val entries: List<TimelineEntry>,
     val label: String? = null,
     val previousMessages: Boolean = false,
+    val fileSummary: Boolean = false,
 )
 
 /** Collapse only completed, same-turn history. Interactive artifacts remain visible. */
 internal fun projectTimeline(entries: List<TimelineEntry>, runningTurnId: String? = null): List<TimelineRow> {
     val hidden = mutableSetOf<String>()
+    val summaries = mutableMapOf<String, TimelineRow>()
     val groups = mutableMapOf<String, TimelineRow>()
     entries.filter { it.turnId != null }.groupBy { it.turnId }.forEach { (_, turn) ->
         val final = turn.lastOrNull { it.kind == TimelineEntryKind.Chat && (it.speaker.equals("Assistant", true) || it.speaker.equals("Codex", true)) && !it.isStreaming }
         if (final != null && final.turnCompleted && final.turnId != runningTurnId) {
+            val changes = turn.filter { it.kind == TimelineEntryKind.FileChange && !it.isStreaming }
+            if (changes.isNotEmpty()) {
+                hidden += changes.map { it.id }
+                summaries[final.id] = TimelineRow("changes-${final.id}", changes, fileSummary = true)
+            }
             val before = turn.takeWhile { it.id != final.id }
             val lastUser = before.indexOfLast { it.speaker.equals("User", true) || it.speaker.equals("You", true) }
             val candidates = before.drop(lastUser + 1).filter {
-                !it.isStreaming && it.attachments.isEmpty() && (it.kind in setOf(TimelineEntryKind.Thinking, TimelineEntryKind.ToolActivity, TimelineEntryKind.CommandExecution) ||
+                !it.isStreaming && it.attachments.isEmpty() && !it.body.contains("![") && (it.kind in setOf(TimelineEntryKind.Thinking, TimelineEntryKind.ToolActivity, TimelineEntryKind.CommandExecution) ||
                     (it.kind == TimelineEntryKind.Chat && (it.speaker.equals("Assistant", true) || it.speaker.equals("Codex", true))))
             }
             if (candidates.isNotEmpty()) {
@@ -52,6 +59,7 @@ internal fun projectTimeline(entries: List<TimelineEntry>, runningTurnId: String
             } else {
                 flush()
                 rows += TimelineRow(entry.id, listOf(entry))
+                summaries[entry.id]?.let { rows += it }
             }
         }
     }

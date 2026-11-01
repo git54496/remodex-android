@@ -152,6 +152,7 @@ fun ConversationScreen(
     onStop: () -> Unit,
     onContinue: () -> Unit,
     onMenuClick: () -> Unit,
+    readWorkspaceImage: suspend (String) -> ByteArray = { error("Image preview unavailable") },
     canInteractWithMessages: Boolean = false,
     onSubmitAnswer: (String, List<String>) -> Unit = { _, _ -> },
     onReviewAnswer: (String) -> Unit = {},
@@ -174,6 +175,7 @@ fun ConversationScreen(
         // Toolbar
         ConversationToolbar(
             title = summary.title,
+            subtitle = summary.projectPath.substringAfterLast('/'),
             status = detail.status,
             onMenuClick = onMenuClick,
         )
@@ -193,7 +195,7 @@ fun ConversationScreen(
         ) {
             items(visibleEntries, key = { it.id }) { entry ->
                 androidx.compose.runtime.CompositionLocalProvider(LocalMessageInteractions provides
-                    MessageInteractions(canInteractWithMessages, onSubmitAnswer, onReviewAnswer, onOpenAgent)) {
+                    MessageInteractions(canInteractWithMessages, onSubmitAnswer, onReviewAnswer, readWorkspaceImage, onOpenAgent)) {
                     ProjectedTimelineRow(entry)
                 }
             }
@@ -256,6 +258,7 @@ fun ConversationScreen(
 
 @Composable
 internal fun ProjectedTimelineRow(row: TimelineRow) {
+    if (row.fileSummary) { FileChangeSummaryCard(row.entries); return }
     if (row.label == null) {
         row.entries.forEach { TimelineMessageContent(it) }
         return
@@ -307,7 +310,7 @@ internal fun AssistantMessageContent(entry: TimelineEntry) {
     LaunchedEffect(copied) { if (copied) { delay(1600); copied = false } }
     Column(Modifier.fillMaxWidth().testTag("assistant-prose"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SelectionContainer {
-            MarkdownBody(entry.body, Ink, MaterialTheme.typography.bodyLarge, modifier = Modifier.fillMaxWidth())
+            AssistantMarkdownBody(entry.body)
         }
         if (entry.attachments.isNotEmpty()) TimelineAttachmentsRow(entry.attachments)
         if (entry.isStreaming) {
@@ -642,8 +645,9 @@ private fun ComposerArea(
     onStop: () -> Unit,
     onContinue: () -> Unit,
 ) {
+    var controlsExpanded by rememberSaveable { mutableStateOf(false) }
     Surface(
-        color = ComposerBg,
+        color = Color.White,
         shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
     ) {
         Column(
@@ -651,9 +655,13 @@ private fun ComposerArea(
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 8.dp),
         ) {
+            IconButton(onClick = { controlsExpanded = !controlsExpanded }) {
+                Icon(Icons.Default.ChevronRight, if (controlsExpanded) "Hide composer controls" else "Show composer controls",
+                    tint = InkSecondary, modifier = Modifier.rotate(if (controlsExpanded) 90f else 0f))
+            }
             // ── Composer card (input + bottom bar wrapped together) ──
             Surface(
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(28.dp),
                 color = Color.White,
                 shadowElevation = 1.dp,
             ) {
@@ -671,31 +679,41 @@ private fun ComposerArea(
                         Spacer(modifier = Modifier.height(4.dp))
                     }
 
-                    // Text input
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 32.dp, max = 120.dp)
-                            .padding(horizontal = 8.dp, vertical = 8.dp),
-                    ) {
-                        if (draftMessage.isEmpty()) {
-                            Text(
-                                text = "Message...",
-                                style = TextStyle(fontSize = 15.sp, color = InkTertiary),
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (!controlsExpanded) AttachmentMenuButton(
+                            isPlanModeArmed = isPlanModeArmed, onTogglePlanMode = onTogglePlanMode,
+                            onPickFromGallery = onPickFromGallery, onTakePhoto = onTakePhoto)
+                        // Text input
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 32.dp, max = 120.dp)
+                                .padding(horizontal = 8.dp, vertical = 8.dp),
+                        ) {
+                            if (draftMessage.isEmpty()) {
+                                Text(
+                                    text = "Follow up",
+                                    style = TextStyle(fontSize = 15.sp, color = InkTertiary),
+                                )
+                            }
+                            BasicTextField(
+                                value = draftMessage,
+                                onValueChange = onDraftChange,
+                                modifier = Modifier.fillMaxWidth(),
+                                textStyle = TextStyle(fontSize = 15.sp, color = Ink),
+                                cursorBrush = SolidColor(Ink),
+                                maxLines = 4,
                             )
                         }
-                        BasicTextField(
-                            value = draftMessage,
-                            onValueChange = onDraftChange,
-                            modifier = Modifier.fillMaxWidth(),
-                            textStyle = TextStyle(fontSize = 15.sp, color = Ink),
-                            cursorBrush = SolidColor(Ink),
-                            maxLines = 4,
-                        )
-                    }
 
+                        if (!controlsExpanded) IconButton(
+                            onClick = if (canStop) onStop else onSend,
+                            enabled = isLive && !isBusy && (canStop || draftMessage.isNotBlank() || pendingAttachments.isNotEmpty()),
+                        ) { Icon(if (canStop) Icons.Default.Stop else Icons.Default.ArrowUpward,
+                            if (canStop) "Stop" else "Send", tint = Ink) }
+                    }
                     // Bottom bar: [+] [Model ▼] [Reasoning ▼]  Spacer  [Stop?] [Send]
-                    ComposerBottomBar(
+                    if (controlsExpanded) ComposerBottomBar(
                         isLive = isLive,
                         isBusy = isBusy,
                         isSending = isSending,
@@ -735,7 +753,7 @@ private fun ComposerArea(
             Spacer(modifier = Modifier.height(6.dp))
 
             // ── Secondary bar (outside the card, like iOS) ──
-            ComposerSecondaryBar(
+            if (controlsExpanded) ComposerSecondaryBar(
                 selectedAccessMode = selectedAccessMode,
                 onSelectAccessMode = onSelectAccessMode,
                 currentGitBranch = currentGitBranch,

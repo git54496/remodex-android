@@ -506,6 +506,7 @@ fun MainContent(
                     onSubmitAnswer = vm::submitQuestionAnswer,
                     onReviewAnswer = vm::reviewQuestionAnswer,
                     onOpenAgent = vm::openAgentThread,
+                    readWorkspaceImage = { path -> vm.relayBootstrapService.readWorkspaceImage(path, selectedThread.projectPath) },
                     modifier = modifier,
                 )
             } else {
