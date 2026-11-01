@@ -5,6 +5,7 @@
 // Depends on: ws, crypto, os, ./qr, ./codex-desktop-refresher, ./codex-transport, ./rollout-watch, ./voice-handler
 
 const WebSocket = require("ws");
+const { createDesktopCatalog } = require("./desktop-catalog");
 const { randomBytes } = require("crypto");
 const { execFile } = require("child_process");
 const os = require("os");
@@ -53,6 +54,7 @@ function startBridge({
   onBridgeStatus = null,
 } = {}) {
   const config = explicitConfig || readBridgeConfig();
+  const desktopCatalog = createDesktopCatalog();
   const relayBaseUrl = config.relayUrl.replace(/\/+$/, "");
   if (!relayBaseUrl) {
     console.error("[remodex] No relay URL configured.");
@@ -406,7 +408,7 @@ function startBridge({
     pushNotificationTracker.handleOutbound(message);
     rememberThreadFromMessage("codex", message);
     secureTransport.queueOutboundApplicationMessage(
-      sanitizeRelayBoundCodexMessage(message),
+      desktopCatalog.response(sanitizeRelayBoundCodexMessage(message)),
       sendRelayWireMessage
     );
   });
@@ -479,7 +481,7 @@ function startBridge({
     rolloutLiveMirror?.observeInbound(rawMessage);
     rememberForwardedRequestMethod(rawMessage);
     rememberThreadFromMessage("phone", rawMessage);
-    codex.send(rawMessage);
+    codex.send(desktopCatalog.request(rawMessage));
   }
 
   // Encrypts bridge-generated responses instead of letting the relay see plaintext.
@@ -989,7 +991,8 @@ function buildMacRegistration(deviceState) {
       publicKey: normalizeNonEmptyString(publicKey),
     }))
     .filter((phone) => phone.deviceId && phone.publicKey);
-  const trustedPhoneEntry = trustedPhones[0] || null;
+  // Legacy single-phone relays must resolve the newest paired phone, not the first old one.
+  const trustedPhoneEntry = trustedPhones[trustedPhones.length - 1] || null;
   return {
     macDeviceId: normalizeNonEmptyString(deviceState?.macDeviceId),
     macIdentityPublicKey: normalizeNonEmptyString(deviceState?.macIdentityPublicKey),
@@ -1300,6 +1303,7 @@ function buildHeartbeatBridgeStatus(
 }
 
 module.exports = {
+  buildMacRegistration,
   buildHeartbeatBridgeStatus,
   consumeBridgeInitializedNotification,
   hasRelayConnectionGoneStale,
