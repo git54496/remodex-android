@@ -67,8 +67,10 @@ class MarkdownBodyUiTest {
         compose.onNodeWithText("Complete").assertIsDisplayed()
         compose.onNodeWithText("Pending").assertIsDisplayed()
         compose.onNodeWithText("After rule").assertIsDisplayed()
-        val text = compose.onNodeWithText("bold italic deleted inline").fetchSemanticsNode()
+        val text = compose.onNodeWithText("bold italic deleted", substring = true).fetchSemanticsNode()
             .config[SemanticsProperties.Text].single()
+        // Inline code has visual padding spaces supplied by the library.
+        assertEquals("bold italic deleted inline", text.text.trim().replace(Regex("\\s+"), " "))
         assertTrue(text.spanStyles.any { it.item.fontWeight == FontWeight.Bold })
         assertTrue(text.spanStyles.any { it.item.fontStyle == FontStyle.Italic })
         assertTrue(text.spanStyles.any { it.item.textDecoration == TextDecoration.LineThrough })
