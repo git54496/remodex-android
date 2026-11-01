@@ -28,6 +28,13 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.platform.testTag
+import kotlinx.coroutines.delay
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Add
@@ -187,7 +194,7 @@ fun ConversationScreen(
                 .weight(1f)
                 .fillMaxWidth(),
             state = listState,
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(visibleEntries, key = { it.id }) { entry ->
@@ -254,29 +261,31 @@ fun ConversationScreen(
 // ──────────────────────────────────────────────────────────────
 
 @Composable
-private fun ProjectedTimelineRow(row: TimelineRow) {
+internal fun ProjectedTimelineRow(row: TimelineRow) {
     if (row.label == null) {
-        row.entries.forEach { MessageBubble(it) }
+        row.entries.forEach { TimelineMessageContent(it) }
         return
     }
     var expanded by rememberSaveable(row.id) { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = "${if (expanded) "⌄" else "›"}  ${row.label}",
-            color = InkSecondary,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(vertical = 12.dp),
-        )
+        Row(modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(row.label, color = InkSecondary, style = MaterialTheme.typography.bodyLarge)
+            Icon(Icons.Default.ChevronRight, contentDescription = if (expanded) "Collapse" else "Expand",
+                tint = InkSecondary, modifier = Modifier.size(18.dp).rotate(if (expanded) 90f else 0f))
+        }
         if (expanded) {
             if (row.previousMessages) {
                 projectTimeline(row.entries.map { it.copy(turnCompleted = false) }).forEach { ProjectedTimelineRow(it) }
-            } else row.entries.forEach { MessageBubble(it) }
+            } else row.entries.forEach { TimelineMessageContent(it) }
         }
+        if (row.previousMessages) HorizontalDivider(color = InkSecondary.copy(alpha = 0.18f),
+            modifier = Modifier.testTag("previous-messages-divider"))
     }
 }
 
 @Composable
-private fun MessageBubble(entry: TimelineEntry) {
+internal fun TimelineMessageContent(entry: TimelineEntry) {
     if (entry.kind in setOf(TimelineEntryKind.FileChange, TimelineEntryKind.SubagentAction, TimelineEntryKind.Questions)) {
         SpecializedMessageCard(entry)
         return
@@ -290,73 +299,45 @@ private fun MessageBubble(entry: TimelineEntry) {
         return
     }
 
-    val isUser = entry.speaker.equals("You", ignoreCase = true)
-    val isSystem = entry.speaker.equals("System", ignoreCase = true)
-    // iOS uses tertiarySystemFill at 80% opacity ≈ light gray
-    val userBubbleBg = Color(0xFFE8E8ED).copy(alpha = 0.8f)
-    val containerColor = when {
-        isUser -> userBubbleBg
-        isSystem -> SystemBubble
-        else -> AssistantBubble
+    when {
+        entry.speaker.equals("You", true) || entry.speaker.equals("User", true) -> UserMessageBubble(entry)
+        entry.speaker.equals("System", true) -> StructuredTimelineEntry(entry.copy(kind = TimelineEntryKind.System))
+        else -> AssistantMessageContent(entry)
     }
-    val contentColor = Ink
-    val bubbleShape = if (isUser) {
-        RoundedCornerShape(24.dp, 24.dp, 6.dp, 24.dp)
-    } else {
-        RoundedCornerShape(20.dp, 20.dp, 20.dp, 6.dp)
-    }
+}
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
-    ) {
-        Card(
-            modifier = if (isUser) Modifier.widthIn(max = 300.dp) else Modifier.fillMaxWidth(0.92f),
-            shape = bubbleShape,
-            colors = CardDefaults.cardColors(containerColor = containerColor),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-            border = if (isUser) BorderStroke(0.5.dp, Color.Black.copy(alpha = 0.08f)) else null,
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                if (!isUser) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = entry.speaker,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = InkSecondary,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            text = entry.timestampLabel,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = InkTertiary,
-                        )
-                    }
-                }
-                MarkdownBody(
-                    text = entry.body,
-                    textColor = contentColor,
-                    bodyStyle = MaterialTheme.typography.bodyMedium,
-                )
-                if (entry.attachments.isNotEmpty()) {
-                    TimelineAttachmentsRow(attachments = entry.attachments)
-                }
-                if (isUser) {
-                    Text(
-                        text = entry.timestampLabel,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = InkTertiary,
-                        modifier = Modifier.align(Alignment.End),
-                    )
-                }
+@Composable
+internal fun AssistantMessageContent(entry: TimelineEntry) {
+    val clipboard = LocalClipboardManager.current
+    var copied by remember(entry.id) { mutableStateOf(false) }
+    LaunchedEffect(copied) { if (copied) { delay(1600); copied = false } }
+    Column(Modifier.fillMaxWidth().testTag("assistant-prose"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        SelectionContainer {
+            MarkdownBody(entry.body, Ink, MaterialTheme.typography.bodyLarge, modifier = Modifier.fillMaxWidth())
+        }
+        if (entry.attachments.isNotEmpty()) TimelineAttachmentsRow(entry.attachments)
+        if (entry.isStreaming) {
+            CircularProgressIndicator(Modifier.padding(12.dp).size(20.dp), strokeWidth = 2.dp, color = InkSecondary)
+        } else if (entry.body.isNotBlank()) {
+            IconButton(onClick = { clipboard.setText(AnnotatedString(entry.body)); copied = true }) {
+                Icon(if (copied) Icons.Default.Check else Icons.Outlined.ContentCopy,
+                    contentDescription = if (copied) "Copied" else "Copy reply", tint = InkSecondary, modifier = Modifier.size(20.dp))
             }
         }
+    }
+}
+
+@Composable
+private fun UserMessageBubble(entry: TimelineEntry) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Surface(modifier = Modifier.widthIn(max = 300.dp), shape = RoundedCornerShape(24.dp),
+            color = Color(0xFFE8E8ED).copy(alpha = 0.8f)) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                MarkdownBody(entry.body, Ink, MaterialTheme.typography.bodyLarge)
+                if (entry.attachments.isNotEmpty()) TimelineAttachmentsRow(entry.attachments)
+            }
+        }
+        Text(entry.timestampLabel, style = MaterialTheme.typography.labelSmall, color = InkTertiary)
     }
 }
 
@@ -608,13 +589,8 @@ private fun ActivePlanAccessoryCard(
     }
 }
 
-private sealed interface MarkdownBlock {
-    data class Paragraph(val text: String) : MarkdownBlock
-    data class Code(val text: String) : MarkdownBlock
-}
-
 @Composable
-private fun MarkdownBody(
+internal fun MarkdownBody(
     text: String,
     textColor: Color,
     bodyStyle: TextStyle,
@@ -628,6 +604,19 @@ private fun MarkdownBody(
     ) {
         markdownBlocks(text).forEach { block ->
             when (block) {
+                is MarkdownBlock.Heading -> Text(markdownAnnotatedString(block.text, textColor, false),
+                    color = textColor, style = bodyStyle.copy(fontWeight = FontWeight.SemiBold,
+                        fontSize = if (block.level <= 2) 20.sp else 18.sp))
+                is MarkdownBlock.ListGroup -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    block.items.forEach { item ->
+                        Row(Modifier.fillMaxWidth().padding(start = (item.indent.coerceAtMost(24) * 8).dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(item.marker, color = textColor, style = bodyStyle, modifier = Modifier.widthIn(min = 18.dp))
+                            Text(markdownAnnotatedString(item.text, textColor, monospaceByDefault), color = textColor,
+                                style = bodyStyle, modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
                 is MarkdownBlock.Paragraph -> {
                     Text(
                         text = markdownAnnotatedString(
@@ -659,39 +648,6 @@ private fun MarkdownBody(
             }
         }
     }
-}
-
-private fun markdownBlocks(text: String): List<MarkdownBlock> {
-    if (text.isBlank()) {
-        return emptyList()
-    }
-    val regex = Regex("```(?:[a-zA-Z0-9_-]+)?\\n(.*?)```", setOf(RegexOption.DOT_MATCHES_ALL))
-    val blocks = mutableListOf<MarkdownBlock>()
-    var cursor = 0
-    for (match in regex.findAll(text)) {
-        if (match.range.first > cursor) {
-            val before = text.substring(cursor, match.range.first)
-            appendParagraphBlocks(blocks, before)
-        }
-        blocks += MarkdownBlock.Code(match.groupValues[1])
-        cursor = match.range.last + 1
-    }
-    if (cursor < text.length) {
-        appendParagraphBlocks(blocks, text.substring(cursor))
-    }
-    return blocks.ifEmpty { listOf(MarkdownBlock.Paragraph(text.trim())) }
-}
-
-private fun appendParagraphBlocks(
-    destination: MutableList<MarkdownBlock>,
-    rawText: String,
-) {
-    rawText
-        .trim()
-        .split(Regex("\\n\\s*\\n"))
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
-        .forEach { destination += MarkdownBlock.Paragraph(it) }
 }
 
 private fun markdownAnnotatedString(
