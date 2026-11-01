@@ -78,6 +78,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
@@ -189,75 +191,80 @@ fun ConversationScreen(
         val listState = key(summary.id) { rememberLazyListState() }
         val followLatest = rememberTimelineAutoScroll(listState)
 
-        LazyColumn(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .nestedScroll(followLatest),
-            state = listState,
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            items(visibleEntries, key = { it.id }) { entry ->
-                androidx.compose.runtime.CompositionLocalProvider(LocalMessageInteractions provides
-                    MessageInteractions(canInteractWithMessages, onSubmitAnswer, onReviewAnswer, readWorkspaceImage, onOpenAgent)) {
-                    ProjectedTimelineRow(entry)
+        var composerHeightPx by remember { mutableStateOf(0) }
+        val composerHeight = with(LocalDensity.current) { composerHeightPx.toDp() }
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .nestedScroll(followLatest),
+                state = listState,
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = composerHeight + 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(visibleEntries, key = { it.id }) { entry ->
+                    androidx.compose.runtime.CompositionLocalProvider(LocalMessageInteractions provides
+                        MessageInteractions(canInteractWithMessages, onSubmitAnswer, onReviewAnswer, readWorkspaceImage, onOpenAgent)) {
+                        ProjectedTimelineRow(entry)
+                    }
                 }
             }
-        }
 
-        activePlanEntry?.let { planEntry ->
-            ActivePlanAccessoryCard(
-                entry = planEntry,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            )
-        }
+            Column(Modifier.align(Alignment.BottomCenter).onSizeChanged { composerHeightPx = it.height }) {
+                activePlanEntry?.let { planEntry ->
+                    ActivePlanAccessoryCard(
+                        entry = planEntry,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
 
-        connectionRecovery(hasSavedDevice, isLive, reconnecting, connectionError)?.let {
-            ConnectionRecoveryCard(it, onReconnect)
+                connectionRecovery(hasSavedDevice, isLive, reconnecting, connectionError)?.let {
+                    ConnectionRecoveryCard(it, onReconnect)
+                }
+                // Composer area
+                androidx.compose.runtime.key(summary.id) { ComposerArea(
+                    transcribeVoice = transcribeVoice,
+                    draftMessage = draftMessage,
+                    isLive = isLive,
+                    isBusy = isBusy,
+                    isSending = isSending,
+                    isStopping = isStopping,
+                    canStop = detail.canInterrupt,
+                    canContinue = detail.canContinue,
+                    isContinuing = isContinuing,
+                    availableModels = availableModels,
+                    isLoadingModels = isLoadingModels,
+                    selectedModelId = selectedModelId,
+                    selectedModelTitle = selectedModelTitle,
+                    selectedReasoningTitle = selectedReasoningTitle,
+                    currentReasoningOptions = currentReasoningOptions,
+                    effectiveReasoningEffort = effectiveReasoningEffort,
+                    selectedReasoningEffort = selectedReasoningEffort,
+                    selectedServiceTier = selectedServiceTier,
+                    isReasoningOverrideActive = isReasoningOverrideActive,
+                    isServiceTierOverrideActive = isServiceTierOverrideActive,
+                    onSelectModel = onSelectModel,
+                    onSelectReasoning = onSelectReasoning,
+                    onSelectServiceTier = onSelectServiceTier,
+                    onUseDefaultReasoning = onUseDefaultReasoning,
+                    onUseDefaultServiceTier = onUseDefaultServiceTier,
+                    isPlanModeArmed = isPlanModeArmed,
+                    onTogglePlanMode = onTogglePlanMode,
+                    selectedAccessMode = selectedAccessMode,
+                    onSelectAccessMode = onSelectAccessMode,
+                    currentGitBranch = currentGitBranch,
+                    contextWindowUsage = contextWindowUsage,
+                    pendingAttachments = pendingAttachments,
+                    onRemoveAttachment = onRemoveAttachment,
+                    onPickFromGallery = onPickFromGallery,
+                    onTakePhoto = onTakePhoto,
+                    onDraftChange = onDraftChange,
+                    onSend = onSend,
+                    onStop = onStop,
+                    onContinue = onContinue,
+                ) }
         }
-        // Composer area
-        androidx.compose.runtime.key(summary.id) { ComposerArea(
-            transcribeVoice = transcribeVoice,
-            draftMessage = draftMessage,
-            isLive = isLive,
-            isBusy = isBusy,
-            isSending = isSending,
-            isStopping = isStopping,
-            canStop = detail.canInterrupt,
-            canContinue = detail.canContinue,
-            isContinuing = isContinuing,
-            availableModels = availableModels,
-            isLoadingModels = isLoadingModels,
-            selectedModelId = selectedModelId,
-            selectedModelTitle = selectedModelTitle,
-            selectedReasoningTitle = selectedReasoningTitle,
-            currentReasoningOptions = currentReasoningOptions,
-            effectiveReasoningEffort = effectiveReasoningEffort,
-            selectedReasoningEffort = selectedReasoningEffort,
-            selectedServiceTier = selectedServiceTier,
-            isReasoningOverrideActive = isReasoningOverrideActive,
-            isServiceTierOverrideActive = isServiceTierOverrideActive,
-            onSelectModel = onSelectModel,
-            onSelectReasoning = onSelectReasoning,
-            onSelectServiceTier = onSelectServiceTier,
-            onUseDefaultReasoning = onUseDefaultReasoning,
-            onUseDefaultServiceTier = onUseDefaultServiceTier,
-            isPlanModeArmed = isPlanModeArmed,
-            onTogglePlanMode = onTogglePlanMode,
-            selectedAccessMode = selectedAccessMode,
-            onSelectAccessMode = onSelectAccessMode,
-            currentGitBranch = currentGitBranch,
-            contextWindowUsage = contextWindowUsage,
-            pendingAttachments = pendingAttachments,
-            onRemoveAttachment = onRemoveAttachment,
-            onPickFromGallery = onPickFromGallery,
-            onTakePhoto = onTakePhoto,
-            onDraftChange = onDraftChange,
-            onSend = onSend,
-            onStop = onStop,
-            onContinue = onContinue,
-        ) }
+        }
     }
 }
 
@@ -659,17 +666,20 @@ private fun ComposerArea(
         transcribe = { clip -> transcribeVoice(clip.bytes, clip.durationMs) },
         onTranscript = { text -> onDraftChange(appendVoiceTranscript(draftMessage, text)) })
     var controlsExpanded by rememberSaveable { mutableStateOf(false) }
-    Surface(
-        color = Color.White,
-        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
-    ) {
+    Box {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 8.dp),
         ) {
             VoiceAccessory(voice, toggleVoice)
-            IconButton(onClick = { controlsExpanded = !controlsExpanded }) {
+            IconButton(
+                onClick = { controlsExpanded = !controlsExpanded },
+                modifier = Modifier.padding(start = 16.dp, bottom = 4.dp)
+                    .size(36.dp).clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.92f))
+                    .border(0.5.dp, Color.LightGray, CircleShape),
+            ) {
                 Icon(Icons.Default.ChevronRight, if (controlsExpanded) "Hide composer controls" else "Show composer controls",
                     tint = InkSecondary, modifier = Modifier.rotate(if (controlsExpanded) 90f else 0f))
             }
