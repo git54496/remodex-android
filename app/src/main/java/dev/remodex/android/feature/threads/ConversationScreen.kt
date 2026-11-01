@@ -674,10 +674,10 @@ private fun ComposerArea(
         ) {
             VoiceAccessory(voice, toggleVoice)
             Box(
-                modifier = Modifier.padding(start = 16.dp, bottom = 4.dp)
-                    .size(24.dp).clip(RoundedCornerShape(6.dp))
+                modifier = Modifier.padding(bottom = 4.dp)
+                    .size(24.dp).clip(RoundedCornerShape(9.dp))
                     .background(Color.White.copy(alpha = 0.92f))
-                    .border(0.5.dp, Color.LightGray, RoundedCornerShape(6.dp))
+                    .border(0.5.dp, Color.LightGray, RoundedCornerShape(9.dp))
                     .clickable { controlsExpanded = !controlsExpanded },
                 contentAlignment = Alignment.Center,
             ) {
