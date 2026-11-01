@@ -482,6 +482,7 @@ class RelayBootstrapService(
                 .put("sessionId", payload.sessionId)
                 .put("keyEpoch", serverHello.keyEpoch)
                 .put("lastAppliedBridgeOutboundSeq", 0)
+                .put("skipPriorRpcResponses", true)
             ensureSent(socket, resumeState.toString())
             val initializeLabel = initializeSecureSession(secureSession)
             logInfo(

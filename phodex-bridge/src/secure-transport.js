@@ -107,6 +107,8 @@ function createBridgeSecureTransport({
     }
 
     const bufferEntry = {
+      keyEpoch: activeSession?.keyEpoch ?? null,
+      isRpcResponse: isRpcResponse(normalizedPayload),
       bridgeOutboundSeq: nextBridgeOutboundSeq,
       payloadText: normalizedPayload,
       sizeBytes: Buffer.byteLength(normalizedPayload, "utf8"),
@@ -398,6 +400,10 @@ function createBridgeSecureTransport({
 
     const lastAppliedBridgeOutboundSeq = Number(message.lastAppliedBridgeOutboundSeq) || 0;
     lastRelayedBridgeOutboundSeq = lastAppliedBridgeOutboundSeq;
+    // A restarted Android RPC client has no waiters for earlier connection IDs.
+    // Keep notifications and server requests, but avoid large stale history replies
+    // delaying the new initialize response. Legacy clients retain full replay.
+    activeSession.skipPriorRpcResponses = message.skipPriorRpcResponses === true;
     const missingEntries = replayableOutboundEntries(lastAppliedBridgeOutboundSeq);
     activeSession.isResumed = true;
     for (const entry of missingEntries) {
@@ -510,6 +516,8 @@ function createBridgeSecureTransport({
   function replayableOutboundEntries(lastAppliedBridgeOutboundSeq) {
     return outboundBuffer.filter(
       (entry) => entry.bridgeOutboundSeq > lastAppliedBridgeOutboundSeq
+        && !(activeSession?.skipPriorRpcResponses && entry.isRpcResponse
+          && entry.keyEpoch !== activeSession.keyEpoch)
     );
   }
 
@@ -540,6 +548,12 @@ function createBridgeSecureTransport({
 
 function debugSecureLog(message) {
   console.log(`[remodex][secure] ${message}`);
+}
+
+function isRpcResponse(payloadText) {
+  const message = safeParseJSON(payloadText);
+  return message?.id != null && !message.method
+    && (Object.hasOwn(message, "result") || Object.hasOwn(message, "error"));
 }
 
 function shortId(value) {

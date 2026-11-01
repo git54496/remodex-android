@@ -571,6 +571,7 @@ function finishHandshake({
   handshakeMode,
   lastAppliedBridgeOutboundSeq,
   skipResumeState = false,
+  skipPriorRpcResponses = false,
 }) {
   const controlMessages = [];
   const applicationMessages = [];
@@ -658,6 +659,7 @@ function finishHandshake({
     secureTransport.handleIncomingWireMessage(
       JSON.stringify({
         kind: "resumeState",
+        skipPriorRpcResponses,
         sessionId,
         keyEpoch: serverHello.keyEpoch,
         lastAppliedBridgeOutboundSeq,
@@ -767,3 +769,22 @@ function base64UrlToBase64(value) {
 function base64ToBase64Url(value) {
   return value.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
+
+ test("fresh RPC client skips old responses but preserves events and live replies", () => {
+ const macIdentity=createOkpKeyPair("ed25519"), phoneIdentity=createOkpKeyPair("ed25519");
+ const wire=[];
+ const secureTransport=createBridgeSecureTransport({sessionId:"rpc-replay",relayUrl:"wss://relay.example/relay",deviceState:{macDeviceId:"mac-rpc",macIdentityPrivateKey:macIdentity.privateKey,macIdentityPublicKey:macIdentity.publicKey,trustedPhones:{}}});
+ secureTransport.bindLiveSendWireMessage(raw=>{wire.push(raw);return true;});
+ const handshake=(mode,skip=false)=>finishHandshake({secureTransport,sessionId:"rpc-replay",macDeviceId:"mac-rpc",phoneDeviceId:"phone-rpc",macIdentity,phoneIdentity,phoneEphemeral:createOkpKeyPair("x25519"),handshakeMode:mode,lastAppliedBridgeOutboundSeq:0,skipPriorRpcResponses:skip});
+ handshake(HANDSHAKE_MODE_QR_BOOTSTRAP);
+ secureTransport.queueOutboundApplicationMessage(JSON.stringify({id:"old-history",result:{data:"x".repeat(100000)}}));
+ secureTransport.queueOutboundApplicationMessage(JSON.stringify({method:"turn/completed",params:{threadId:"test"}}));
+ secureTransport.queueOutboundApplicationMessage(JSON.stringify({id:"approval",method:"item/commandExecution/requestApproval",params:{}}));
+ wire.length=0;
+ handshake(HANDSHAKE_MODE_TRUSTED_RECONNECT,true);
+ assert.equal(wire.length,2,"notification and server approval are preserved; stale RPC reply omitted");
+ secureTransport.queueOutboundApplicationMessage(JSON.stringify({id:"new-initialize",result:{ok:true}}));
+ assert.equal(wire.length,3,"new RPC replies still delivered");
+ wire.length=0;secureTransport.bindLiveSendWireMessage(raw=>{wire.push(raw);return true;});
+ assert.equal(wire.length,3,"same-epoch RPC remains replayable on relay reconnect");
+ });
