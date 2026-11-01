@@ -21,6 +21,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".local"
+            versionNameSuffix = "-desktop-sync"
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(

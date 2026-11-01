@@ -108,9 +108,10 @@ fun SidebarContent(
                 || it.projectPath.contains(searchQuery, ignoreCase = true)
         }
     }
-    val grouped = filteredThreads.groupBy { it.projectPath }
+    val grouped = filteredThreads.groupBy { it.desktopGroupId ?: it.projectPath }
     val projectChoices = threads
-        .map { it.projectPath.trim() }
+        .filter { it.desktopGroupId != "projectless" }
+        .map { (it.desktopProjectRoot ?: it.projectPath).trim() }
         .filter { it.isNotEmpty() && it != "Unknown project" }
         .distinct()
         .map { SidebarProjectChoice(projectPath = it, label = projectDisplayName(it)) }
@@ -357,16 +358,19 @@ fun SidebarContent(
                 .weight(1f)
                 .fillMaxWidth(),
         ) {
-            grouped.forEach { (projectPath, projectThreads) ->
-                item(key = "group-$projectPath") {
+            grouped.forEach { (groupId, projectThreads) ->
+                val first = projectThreads.first()
+                val projectPath = first.desktopProjectRoot ?: first.projectPath
+                item(key = "group-$groupId") {
                     CollapsibleProjectGroup(
                         projectPath = projectPath,
+                        displayName = first.desktopGroupName ?: projectDisplayName(projectPath),
                         threads = projectThreads,
                         selectedThreadId = selectedThreadId,
                         isConnected = connectionPhase == ConnectionPhase.Ready,
                         isCreatingThread = isCreatingThread,
                         onSelectThread = onSelectThread,
-                        onCreateThreadInProject = { onCreateThread(projectPath) },
+                        onCreateThreadInProject = { onCreateThread(if (groupId == "projectless") null else projectPath) },
                         onRenameThread = onRenameThread,
                         onArchiveThread = onArchiveThread,
                         onDeleteThread = onDeleteThread,
@@ -441,6 +445,7 @@ fun SidebarContent(
 @Composable
 private fun CollapsibleProjectGroup(
     projectPath: String,
+    displayName: String,
     threads: List<ThreadSummary>,
     selectedThreadId: String?,
     isConnected: Boolean,
@@ -454,7 +459,6 @@ private fun CollapsibleProjectGroup(
     var isExpanded by rememberSaveable(projectPath) { mutableStateOf(true) }
     var showAll by rememberSaveable(projectPath) { mutableStateOf(false) }
 
-    val displayName = projectDisplayName(projectPath)
 
     val visibleThreads = if (isExpanded) {
         if (showAll || threads.size <= COLLAPSED_THREAD_LIMIT) {
