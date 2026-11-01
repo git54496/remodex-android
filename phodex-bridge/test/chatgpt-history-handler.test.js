@@ -71,3 +71,25 @@ test('reads detail and rejects a mismatched conversation', async () => {
   }) });
   assert.equal((await rpc(handler, 'chatgpt/history/read', { id: 'chat' })).error.data.errorCode, 'invalid_response');
 });
+test('retries a dropped connection once without refreshing auth and shares the deadline', async () => {
+  let calls = 0, authCalls = 0, firstSignal;
+  const handler = createChatGptHistoryHandler({
+    sendCodexRequest: async () => { authCalls++; return auth; },
+    fetchImpl: async (_, options) => {
+      if (++calls === 1) { firstSignal = options.signal; throw new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } }); }
+      assert.equal(options.signal, firstSignal);
+      return json({ items: [], offset: 0, limit: 30, total: 0 });
+    },
+  });
+  assert.ok((await rpc(handler, 'chatgpt/history/list')).result);
+  assert.equal(calls, 2);
+  assert.equal(authCalls, 1);
+});
+test('does not keep retrying repeated connection failures', async () => {
+  let calls = 0;
+  const handler = createChatGptHistoryHandler({ sendCodexRequest: async () => auth,
+    fetchImpl: async () => { calls++; throw new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } }); },
+  });
+  assert.equal((await rpc(handler, 'chatgpt/history/list')).error.data.errorCode, 'history_unavailable');
+  assert.equal(calls, 2);
+});

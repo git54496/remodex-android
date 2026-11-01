@@ -41,6 +41,9 @@ function conversationDetail(data) {
 
 function createChatGptHistoryHandler({ sendCodexRequest, fetchImpl = globalThis.fetch }) {
   async function request(path) {
+    // One shared deadline prevents authentication and connection retries from
+    // multiplying the phone's wait time. Never retry a browser challenge.
+    const deadline = AbortSignal.timeout(40000);
     for (let attempt = 0; attempt < 2; attempt++) {
       const auth = await sendCodexRequest('getAuthStatus', { includeToken: true, refreshToken: attempt > 0 });
       if (!['chatgpt', 'chatgptAuthTokens'].includes(auth?.authMethod) || !auth.authToken) {
@@ -49,11 +52,21 @@ function createChatGptHistoryHandler({ sendCodexRequest, fetchImpl = globalThis.
       let accountId;
       try { accountId = JSON.parse(Buffer.from(auth.authToken.split('.')[1], 'base64url'))
         ['https://api.openai.com/auth']?.chatgpt_account_id; } catch {}
-      const response = await fetchImpl(BASE + path, {
-        method: 'GET', redirect: 'error', signal: AbortSignal.timeout(25000),
+      const options = {
+        method: 'GET', redirect: 'error', signal: deadline,
         headers: { Authorization: `Bearer ${auth.authToken}`, 'User-Agent': USER_AGENT,
           originator: 'Codex Desktop', ...(accountId ? { 'ChatGPT-Account-ID': accountId } : {}) },
-      });
+      };
+      let response;
+      try {
+        response = await fetchImpl(BASE + path, options);
+      } catch (error) {
+        const code = error.cause?.code || error.code;
+        if (deadline.aborted || !['ECONNRESET', 'EPIPE', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT'].includes(code)) throw error;
+        // GET is read-only. A dropped socket can be retried with the same auth;
+        // refreshing credentials would not fix a transport failure.
+        response = await fetchImpl(BASE + path, options);
+      }
       if (response.status === 401 && attempt === 0) { await response.body?.cancel(); continue; }
       if (!response.ok) {
         await response.body?.cancel();
