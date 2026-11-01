@@ -315,7 +315,7 @@ internal fun AssistantMessageContent(entry: TimelineEntry) {
         if (entry.attachments.isNotEmpty()) TimelineAttachmentsRow(entry.attachments)
         if (entry.isStreaming) {
             CircularProgressIndicator(Modifier.padding(12.dp).size(20.dp), strokeWidth = 2.dp, color = InkSecondary)
-        } else if (entry.body.isNotBlank()) {
+        } else if (entry.body.isNotBlank() && assistantContentParts(entry.body).any { it.imagePath == null }) {
             IconButton(onClick = { clipboard.setText(AnnotatedString(entry.body)); copied = true }) {
                 Icon(if (copied) Icons.Default.Check else Icons.Outlined.ContentCopy,
                     contentDescription = if (copied) "Copied" else "Copy reply", tint = InkSecondary, modifier = Modifier.size(20.dp))

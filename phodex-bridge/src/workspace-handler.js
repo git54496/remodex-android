@@ -54,6 +54,7 @@ function handleWorkspaceRequest(rawMessage, sendResponse) {
 }
 
 async function handleWorkspaceMethod(method, params) {
+  if (method === "workspace/readImage") return require("./workspace-image").workspaceReadImage(params);
   const cwd = await resolveWorkspaceCwd(params);
   const repoRoot = await resolveRepoRoot(cwd);
 

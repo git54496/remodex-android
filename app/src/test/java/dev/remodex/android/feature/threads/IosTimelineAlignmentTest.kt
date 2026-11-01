@@ -21,7 +21,7 @@ class IosTimelineAlignmentTest {
     @Test fun sameFileEditsAggregateCountsAndPreserveDiffs() {
         val first = entry("1", TimelineEntryKind.FileChange, "--- a/src/A.kt\n+++ b/src/A.kt\n-old\n+new")
         val second = entry("2", TimelineEntryKind.FileChange, "--- a/src/A.kt\n+++ b/src/A.kt\n+another")
-        val summary = summarizeFileChanges(listOf(first, second)).single()
+        val summary = summarizeFileChanges(listOf(first, second, second)).single()
         assertEquals(2, summary.additions)
         assertEquals(1, summary.deletions)
         assertTrue(summary.diff.contains("+another"))
