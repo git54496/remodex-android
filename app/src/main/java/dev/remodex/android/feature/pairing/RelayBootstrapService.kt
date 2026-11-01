@@ -54,7 +54,7 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 private const val relayWaitTimeoutMs = 12_000L
-private const val secureProtocolVersion = 1
+private const val secureProtocolVersion = 2
 private const val secureHandshakeTag = "remodex-e2ee-v1"
 private const val secureHandshakeLabel = "client-auth"
 private const val secureHandshakeModeQrBootstrap = "qr_bootstrap"
@@ -483,6 +483,7 @@ class RelayBootstrapService(
                 .put("keyEpoch", serverHello.keyEpoch)
                 .put("lastAppliedBridgeOutboundSeq", 0)
                 .put("skipPriorRpcResponses", true)
+                .put("bridgeReplayEpoch", serverHello.bridgeReplayEpoch)
             ensureSent(socket, resumeState.toString())
             val initializeLabel = initializeSecureSession(secureSession)
             logInfo(
@@ -1366,6 +1367,7 @@ class RelayBootstrapService(
             expiresAtForTranscript = json.optLong("expiresAtForTranscript"),
             macSignature = json.optString("macSignature"),
             clientNonce = json.optString("clientNonce").ifBlank { null },
+            bridgeReplayEpoch = json.optString("bridgeReplayEpoch").ifBlank { null },
         )
     }
 
@@ -2966,6 +2968,11 @@ class RelayBootstrapService(
             return
         }
         val params = payloadObject.optJSONObject("params") ?: JSONObject()
+        // v2 historical notifications must not revive a running turn after reconnect.
+        // Bootstrap reloads canonical thread history, so ignore this catch-up tail.
+        if (params.optBoolean("remodexReplayedEvent") || method.startsWith("remodex/bufferedReplay/")) {
+            return
+        }
 
         when (method) {
             "turn/started" -> {
@@ -4100,7 +4107,8 @@ internal object RelaySecureCrypto {
         val sender = envelope.optString("sender")
         val counter = envelope.optInt("counter")
         if (
-            sessionId != session.sessionId
+            envelope.optInt("v") != secureProtocolVersion
+            || sessionId != session.sessionId
             || keyEpoch != session.keyEpoch
             || sender != "mac"
             || counter <= session.lastInboundCounter
@@ -4234,6 +4242,7 @@ internal data class ServerHelloMessage(
     val expiresAtForTranscript: Long,
     val macSignature: String,
     val clientNonce: String?,
+    val bridgeReplayEpoch: String? = null,
 )
 
 internal data class ActiveSecureRelaySession(

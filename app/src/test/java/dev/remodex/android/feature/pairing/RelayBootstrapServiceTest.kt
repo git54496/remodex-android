@@ -54,6 +54,7 @@ class RelayBootstrapServiceTest {
         assertEquals("Initialize complete", verification.initializeLabel)
         assertEquals(fixedNow, verification.verifiedAt)
         assertTrue(factory.didReceiveResumeState)
+        assertEquals("test-v2-epoch", factory.receivedReplayEpoch)
         assertTrue(factory.didReceiveInitializeRequest)
         assertTrue(factory.didReceiveInitializedNotification)
         val liveThreads = service.fetchThreadList()
@@ -566,6 +567,40 @@ class RelayBootstrapServiceTest {
     }
 
     @Test
+    fun ignoresV2HistoricalRunningEventsAfterReconnect() = runBlocking {
+        val bridgeIdentity = RelaySecureCrypto.generatePhoneIdentity()
+        val payload = PairingQrPayload(
+            version = 2,
+            relay = "wss://example.com/relay",
+            sessionId = "session-123",
+            macDeviceId = "mac-device-1",
+            macIdentityPublicKey = bridgeIdentity.publicKeyBase64,
+            expiresAt = 1_900_000_000_000L,
+        )
+        val factory = SuccessfulRelaySocketFactory(
+            payload = payload,
+            bridgeIdentity = bridgeIdentity,
+            initialLiveThreadStatus = "waiting",
+            initialTurnStatus = "completed",
+            emitRunningNotificationBeforeThreadResponses = true,
+            replayRunningNotifications = true,
+        )
+        val service = RelayBootstrapService(
+            socketFactory = factory,
+            now = { fixedNow },
+        )
+
+        service.bootstrap(payload)
+
+        val liveThreads = service.fetchThreadList()
+        val liveDetail = service.fetchThreadDetail("live-thread-1")
+
+        assertFalse(liveThreads.first().status == ThreadStatus.Running)
+        assertFalse(liveDetail.isRunning)
+        assertNull(liveDetail.activeTurnId)
+    }
+
+    @Test
     fun forwardsAssistantRuntimeEventsForPhoneStartedTurn() = runBlocking {
         val bridgeIdentity = RelaySecureCrypto.generatePhoneIdentity()
         val payload = PairingQrPayload(
@@ -952,6 +987,7 @@ private class SuccessfulRelaySocketFactory(
     private val initialLiveThreadStatus: String = "running",
     private val initialTurnStatus: String = "running",
     private val emitRunningNotificationBeforeThreadResponses: Boolean = false,
+    private val replayRunningNotifications: Boolean = false,
     private val emitAssistantStreamDuringTurnStart: Boolean = false,
     private val emitThreadLifecycleNotificationsBeforeThreadResponses: Boolean = false,
     private val includeStructuredTimelineItems: Boolean = false,
@@ -965,6 +1001,7 @@ private class SuccessfulRelaySocketFactory(
     private val fixedNow = Instant.parse("2026-03-26T20:00:00Z")
     var connectedUrl: String? = null
     var connectedHeaders: Map<String, String> = emptyMap()
+    var receivedReplayEpoch: String? = null
     var didReceiveResumeState = false
     var didReceiveInitializeRequest = false
     var didReceiveInitializedNotification = false
@@ -1115,7 +1152,10 @@ private class SuccessfulRelaySocketFactory(
                             .toString(),
                     )
 
-                    "resumeState" -> didReceiveResumeState = true
+                    "resumeState" -> {
+                        didReceiveResumeState = true
+                        receivedReplayEpoch = json.optString("bridgeReplayEpoch")
+                    }
                     "encryptedEnvelope" -> handleEncryptedEnvelope(json, listener)
                 }
                 return true
@@ -1138,7 +1178,7 @@ private class SuccessfulRelaySocketFactory(
         val expiresAtForTranscript = if (handshakeMode == "trusted_reconnect") 0L else payload.expiresAt
         val transcriptBytes = RelaySecureCrypto.buildTranscriptBytes(
             sessionId = payload.sessionId,
-            protocolVersion = 1,
+            protocolVersion = 2,
             handshakeMode = handshakeMode,
             keyEpoch = 1,
             macDeviceId = payload.macDeviceId,
@@ -1167,7 +1207,8 @@ private class SuccessfulRelaySocketFactory(
 
         return JSONObject()
             .put("kind", "serverHello")
-            .put("protocolVersion", 1)
+            .put("protocolVersion", 2)
+            .put("bridgeReplayEpoch", "test-v2-epoch")
             .put("sessionId", payload.sessionId)
             .put("handshakeMode", handshakeMode)
             .put("macDeviceId", payload.macDeviceId)
@@ -1560,6 +1601,7 @@ private class SuccessfulRelaySocketFactory(
                 .put(
                     "params",
                     JSONObject()
+                        .put("remodexReplayedEvent", replayRunningNotifications)
                         .put("threadId", "live-thread-1")
                         .put("turnId", "turn-live"),
                 ),
@@ -1572,6 +1614,7 @@ private class SuccessfulRelaySocketFactory(
                 .put(
                     "params",
                     JSONObject()
+                        .put("remodexReplayedEvent", replayRunningNotifications)
                         .put("threadId", "live-thread-1")
                         .put("status", encodeStatusPayload("running")),
                 ),

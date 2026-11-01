@@ -6,7 +6,6 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const os = require("os");
 const {
   createCipheriv,
   createDecipheriv,
@@ -21,15 +20,24 @@ const {
 const {
   HANDSHAKE_MODE_QR_BOOTSTRAP,
   HANDSHAKE_MODE_TRUSTED_RECONNECT,
+  SECURE_PROTOCOL_VERSION,
   createBridgeSecureTransport,
   nonceForDirection,
 } = require("../src/secure-transport");
+
+// Keeps unit handshakes from mutating the real Mac pairing trust store.
+function createTestBridgeSecureTransport(options) {
+  return createBridgeSecureTransport({
+    ...options,
+    persistTrustedPhone: false,
+  });
+}
 
 test("secure transport rejects plaintext JSON-RPC before the secure handshake", () => {
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   const privateJwk = privateKey.export({ format: "jwk" });
   const publicJwk = publicKey.export({ format: "jwk" });
-  const secureTransport = createBridgeSecureTransport({
+  const secureTransport = createTestBridgeSecureTransport({
     sessionId: "session-1",
     relayUrl: "wss://relay.example/relay",
     deviceState: {
@@ -66,9 +74,10 @@ test("secure transport round-trips encrypted payloads after a trusted reconnect 
   const macIdentity = createOkpKeyPair("ed25519");
   const phoneIdentity = createOkpKeyPair("ed25519");
   const phoneEphemeral = createOkpKeyPair("x25519");
-  const secureTransport = createBridgeSecureTransport({
+  const secureTransport = createTestBridgeSecureTransport({
     sessionId: "session-2",
     relayUrl: "wss://relay.example/relay",
+    displayName: "Desk Mac",
     deviceState: {
       macDeviceId: "mac-2",
       macIdentityPrivateKey: macIdentity.privateKey,
@@ -90,7 +99,7 @@ test("secure transport round-trips encrypted payloads after a trusted reconnect 
   secureTransport.handleIncomingWireMessage(
     JSON.stringify({
       kind: "clientHello",
-      protocolVersion: 1,
+      protocolVersion: SECURE_PROTOCOL_VERSION,
       sessionId: "session-2",
       handshakeMode: HANDSHAKE_MODE_TRUSTED_RECONNECT,
       phoneDeviceId: "phone-2",
@@ -110,10 +119,11 @@ test("secure transport round-trips encrypted payloads after a trusted reconnect 
 
   const serverHello = controlMessages.find((message) => message.kind === "serverHello");
   assert.ok(serverHello, "expected serverHello");
+  assert.equal(serverHello.displayName, "Desk Mac");
 
   const transcriptBytes = buildTranscriptBytes({
     sessionId: "session-2",
-    protocolVersion: 1,
+    protocolVersion: SECURE_PROTOCOL_VERSION,
     handshakeMode: HANDSHAKE_MODE_TRUSTED_RECONNECT,
     keyEpoch: serverHello.keyEpoch,
     macDeviceId: "mac-2",
@@ -164,7 +174,6 @@ test("secure transport round-trips encrypted payloads after a trusted reconnect 
 
   const secureReady = controlMessages.find((message) => message.kind === "secureReady");
   assert.ok(secureReady, "expected secureReady");
-  assert.equal(secureReady.displayName, os.hostname());
 
   const sharedSecret = diffieHellman({
     privateKey: createPrivateKey({
@@ -200,6 +209,7 @@ test("secure transport round-trips encrypted payloads after a trusted reconnect 
       sessionId: "session-2",
       keyEpoch: serverHello.keyEpoch,
       lastAppliedBridgeOutboundSeq: 0,
+      bridgeReplayEpoch: serverHello.bridgeReplayEpoch,
     }),
     {
       sendControlMessage(message) {
@@ -251,13 +261,13 @@ test("secure transport round-trips encrypted payloads after a trusted reconnect 
   ]);
 });
 
-test("qr bootstrap keeps previously trusted phones available for trusted reconnect", () => {
+test("qr bootstrap allows a fresh QR scan to replace the trusted iPhone", () => {
   const macIdentity = createOkpKeyPair("ed25519");
   const firstPhoneIdentity = createOkpKeyPair("ed25519");
   const firstPhoneEphemeral = createOkpKeyPair("x25519");
   const secondPhoneIdentity = createOkpKeyPair("ed25519");
   const secondPhoneEphemeral = createOkpKeyPair("x25519");
-  const secureTransport = createBridgeSecureTransport({
+  const secureTransport = createTestBridgeSecureTransport({
     sessionId: "session-3",
     relayUrl: "wss://relay.example/relay",
     deviceState: {
@@ -291,30 +301,6 @@ test("qr bootstrap keeps previously trusted phones available for trusted reconne
     handshakeMode: HANDSHAKE_MODE_QR_BOOTSTRAP,
     lastAppliedBridgeOutboundSeq: 0,
   });
-
-  finishHandshake({
-    secureTransport,
-    sessionId: "session-3",
-    macDeviceId: "mac-3",
-    phoneDeviceId: "phone-3a",
-    macIdentity,
-    phoneIdentity: firstPhoneIdentity,
-    phoneEphemeral: createOkpKeyPair("x25519"),
-    handshakeMode: HANDSHAKE_MODE_TRUSTED_RECONNECT,
-    lastAppliedBridgeOutboundSeq: 0,
-  });
-
-  finishHandshake({
-    secureTransport,
-    sessionId: "session-3",
-    macDeviceId: "mac-3",
-    phoneDeviceId: "phone-3b",
-    macIdentity,
-    phoneIdentity: secondPhoneIdentity,
-    phoneEphemeral: createOkpKeyPair("x25519"),
-    handshakeMode: HANDSHAKE_MODE_TRUSTED_RECONNECT,
-    lastAppliedBridgeOutboundSeq: 0,
-  });
 });
 
 test("qr bootstrap starts a fresh replay window instead of leaking buffered messages", () => {
@@ -323,7 +309,7 @@ test("qr bootstrap starts a fresh replay window instead of leaking buffered mess
   const firstEphemeral = createOkpKeyPair("x25519");
   const secondEphemeral = createOkpKeyPair("x25519");
   const wireMessages = [];
-  const secureTransport = createBridgeSecureTransport({
+  const secureTransport = createTestBridgeSecureTransport({
     sessionId: "session-4",
     relayUrl: "wss://relay.example/relay",
     deviceState: {
@@ -376,7 +362,7 @@ test("rebinding the relay socket replays bridge output from the last phone ack",
   const macIdentity = createOkpKeyPair("ed25519");
   const phoneIdentity = createOkpKeyPair("ed25519");
   const phoneEphemeral = createOkpKeyPair("x25519");
-  const secureTransport = createBridgeSecureTransport({
+  const secureTransport = createTestBridgeSecureTransport({
     sessionId: "session-5",
     relayUrl: "wss://relay.example/relay",
     deviceState: {
@@ -466,11 +452,254 @@ test("rebinding the relay socket replays bridge output from the last phone ack",
   );
 });
 
+test("same-session relay replays keep live notifications untagged", () => {
+  const macIdentity = createOkpKeyPair("ed25519");
+  const phoneIdentity = createOkpKeyPair("ed25519");
+  const phoneEphemeral = createOkpKeyPair("x25519");
+  const secureTransport = createTestBridgeSecureTransport({
+    sessionId: "session-replay-tag",
+    relayUrl: "wss://relay.example/relay",
+    deviceState: {
+      macDeviceId: "mac-replay-tag",
+      macIdentityPrivateKey: macIdentity.privateKey,
+      macIdentityPublicKey: macIdentity.publicKey,
+      trustedPhones: {},
+    },
+  });
+
+  const { serverHello, transcriptBytes } = finishHandshake({
+    secureTransport,
+    sessionId: "session-replay-tag",
+    macDeviceId: "mac-replay-tag",
+    phoneDeviceId: "phone-replay-tag",
+    macIdentity,
+    phoneIdentity,
+    phoneEphemeral,
+    handshakeMode: HANDSHAKE_MODE_QR_BOOTSTRAP,
+    lastAppliedBridgeOutboundSeq: 0,
+  });
+
+  const macToPhoneKey = deriveMacToPhoneKey({
+    sessionId: "session-replay-tag",
+    macDeviceId: "mac-replay-tag",
+    phoneDeviceId: "phone-replay-tag",
+    phoneEphemeral,
+    serverHello,
+    transcriptBytes,
+  });
+
+  const liveWireMessages = [];
+  secureTransport.bindLiveSendWireMessage((message) => {
+    liveWireMessages.push(message);
+    return true;
+  });
+
+  secureTransport.queueOutboundApplicationMessage(
+    JSON.stringify({ method: "turn/started", params: { threadId: "thread-live" } }),
+    () => false
+  );
+  secureTransport.queueOutboundApplicationMessage(
+    JSON.stringify({ id: "response-live", result: { ok: true } }),
+    () => false
+  );
+
+  assert.equal(liveWireMessages.length, 2);
+  const livePayload = decryptEnvelope(JSON.parse(liveWireMessages[0]), macToPhoneKey);
+  assert.equal(
+    JSON.parse(livePayload.payloadText).params.remodexReplayedEvent,
+    undefined
+  );
+
+  const replayWireMessages = [];
+  secureTransport.bindLiveSendWireMessage((message) => {
+    replayWireMessages.push(message);
+    return true;
+  });
+
+  assert.equal(replayWireMessages.length, 2);
+  const replayedNotification = decryptEnvelope(JSON.parse(replayWireMessages[0]), macToPhoneKey);
+  const replayedNotificationPayload = JSON.parse(replayedNotification.payloadText);
+  assert.equal(replayedNotificationPayload.method, "turn/started");
+  assert.equal(replayedNotificationPayload.params.threadId, "thread-live");
+  assert.equal(replayedNotificationPayload.params.remodexReplayedEvent, undefined);
+
+  const replayedResponse = decryptEnvelope(JSON.parse(replayWireMessages[1]), macToPhoneKey);
+  assert.equal(
+    replayedResponse.payloadText,
+    JSON.stringify({ id: "response-live", result: { ok: true } })
+  );
+});
+
+test("previous-session replayed notifications are tagged as catch-up history", () => {
+  const macIdentity = createOkpKeyPair("ed25519");
+  const phoneIdentity = createOkpKeyPair("ed25519");
+  const phoneEphemeral = createOkpKeyPair("x25519");
+  const secureTransport = createTestBridgeSecureTransport({
+    sessionId: "session-previous-replay-tag",
+    relayUrl: "wss://relay.example/relay",
+    deviceState: {
+      macDeviceId: "mac-previous-replay-tag",
+      macIdentityPrivateKey: macIdentity.privateKey,
+      macIdentityPublicKey: macIdentity.publicKey,
+      trustedPhones: {},
+    },
+  });
+
+  finishHandshake({
+    secureTransport,
+    sessionId: "session-previous-replay-tag",
+    macDeviceId: "mac-previous-replay-tag",
+    phoneDeviceId: "phone-previous-replay-tag",
+    macIdentity,
+    phoneIdentity,
+    phoneEphemeral,
+    handshakeMode: HANDSHAKE_MODE_QR_BOOTSTRAP,
+    lastAppliedBridgeOutboundSeq: 0,
+  });
+
+  let captureReplay = false;
+  const replayWireMessages = [];
+  secureTransport.bindLiveSendWireMessage((message) => {
+    if (captureReplay) {
+      replayWireMessages.push(message);
+    }
+    return true;
+  });
+
+  secureTransport.queueOutboundApplicationMessage(
+    JSON.stringify({ method: "turn/started", params: { threadId: "thread-previous-session" } }),
+    () => false
+  );
+
+  const reconnectEphemeral = createOkpKeyPair("x25519");
+  captureReplay = true;
+  const { serverHello, transcriptBytes } = finishHandshake({
+    secureTransport,
+    sessionId: "session-previous-replay-tag",
+    macDeviceId: "mac-previous-replay-tag",
+    phoneDeviceId: "phone-previous-replay-tag",
+    macIdentity,
+    phoneIdentity,
+    phoneEphemeral: reconnectEphemeral,
+    handshakeMode: HANDSHAKE_MODE_TRUSTED_RECONNECT,
+    lastAppliedBridgeOutboundSeq: 0,
+  });
+
+  const macToPhoneKey = deriveMacToPhoneKey({
+    sessionId: "session-previous-replay-tag",
+    macDeviceId: "mac-previous-replay-tag",
+    phoneDeviceId: "phone-previous-replay-tag",
+    phoneEphemeral: reconnectEphemeral,
+    serverHello,
+    transcriptBytes,
+  });
+  // Historical backlog replay closes with a transient completion marker so the
+  // phone can settle its catch-up burst deterministically.
+  assert.equal(replayWireMessages.length, 2);
+  const replayedNotification = decryptEnvelope(JSON.parse(replayWireMessages[0]), macToPhoneKey);
+  const replayedNotificationPayload = JSON.parse(replayedNotification.payloadText);
+  assert.equal(replayedNotificationPayload.method, "turn/started");
+  assert.equal(replayedNotificationPayload.params.threadId, "thread-previous-session");
+  assert.equal(replayedNotificationPayload.params.remodexReplayedEvent, true);
+
+  const completionMarker = decryptEnvelope(JSON.parse(replayWireMessages[1]), macToPhoneKey);
+  // Transient marker: no bridgeOutboundSeq, so it never advances the phone ack
+  // cursor and is never re-replayed from the buffer.
+  assert.equal(completionMarker.bridgeOutboundSeq, undefined);
+  const completionMarkerPayload = JSON.parse(completionMarker.payloadText);
+  assert.equal(completionMarkerPayload.method, "remodex/bufferedReplay/completed");
+  assert.equal(completionMarkerPayload.params.remodexBufferedReplayComplete, true);
+});
+
+test("truncated resume replay discards the partial tail and declares a canonical-history gap", () => {
+  const macIdentity = createOkpKeyPair("ed25519");
+  const phoneIdentity = createOkpKeyPair("ed25519");
+  const phoneEphemeral = createOkpKeyPair("x25519");
+  const secureTransport = createTestBridgeSecureTransport({
+    sessionId: "session-truncated-replay",
+    relayUrl: "wss://relay.example/relay",
+    deviceState: {
+      macDeviceId: "mac-truncated-replay",
+      macIdentityPrivateKey: macIdentity.privateKey,
+      macIdentityPublicKey: macIdentity.publicKey,
+      trustedPhones: {},
+    },
+  });
+
+  finishHandshake({
+    secureTransport,
+    sessionId: "session-truncated-replay",
+    macDeviceId: "mac-truncated-replay",
+    phoneDeviceId: "phone-truncated-replay",
+    macIdentity,
+    phoneIdentity,
+    phoneEphemeral,
+    handshakeMode: HANDSHAKE_MODE_QR_BOOTSTRAP,
+    lastAppliedBridgeOutboundSeq: 0,
+  });
+  let captureReplay = false;
+  const replayWireMessages = [];
+  secureTransport.bindLiveSendWireMessage((message) => {
+    if (captureReplay) {
+      replayWireMessages.push(message);
+    }
+    return true;
+  });
+  for (let index = 1; index <= 501; index += 1) {
+    secureTransport.queueOutboundApplicationMessage(
+      JSON.stringify({
+        method: "item/completed",
+        params: { threadId: "thread-truncated-replay", itemId: `item-${index}` },
+      }),
+      () => false
+    );
+  }
+
+  const reconnectEphemeral = createOkpKeyPair("x25519");
+  captureReplay = true;
+  const { serverHello, transcriptBytes } = finishHandshake({
+    secureTransport,
+    sessionId: "session-truncated-replay",
+    macDeviceId: "mac-truncated-replay",
+    phoneDeviceId: "phone-truncated-replay",
+    macIdentity,
+    phoneIdentity,
+    phoneEphemeral: reconnectEphemeral,
+    handshakeMode: HANDSHAKE_MODE_TRUSTED_RECONNECT,
+    lastAppliedBridgeOutboundSeq: 0,
+  });
+  const macToPhoneKey = deriveMacToPhoneKey({
+    sessionId: "session-truncated-replay",
+    macDeviceId: "mac-truncated-replay",
+    phoneDeviceId: "phone-truncated-replay",
+    phoneEphemeral: reconnectEphemeral,
+    serverHello,
+    transcriptBytes,
+  });
+
+  assert.equal(replayWireMessages.length, 2);
+  const gapPayload = decryptEnvelope(JSON.parse(replayWireMessages[0]), macToPhoneKey);
+  const gapMessage = JSON.parse(gapPayload.payloadText);
+  assert.equal(gapPayload.bridgeOutboundSeq, undefined);
+  assert.equal(gapMessage.method, "remodex/bufferedReplay/gap");
+  assert.deepEqual(gapMessage.params, {
+    remodexBufferedReplayGap: true,
+    expectedBridgeOutboundSeq: 1,
+    firstAvailableBridgeOutboundSeq: 2,
+    lastDiscardedBridgeOutboundSeq: 501,
+  });
+  const completionPayload = decryptEnvelope(JSON.parse(replayWireMessages[1]), macToPhoneKey);
+  assert.equal(
+    JSON.parse(completionPayload.payloadText).params.remodexBufferedReplayComplete,
+    true
+  );
+});
+
 test("resume replay does not advance the replay watermark before a phone ack", () => {
   const macIdentity = createOkpKeyPair("ed25519");
   const phoneIdentity = createOkpKeyPair("ed25519");
   const phoneEphemeral = createOkpKeyPair("x25519");
-  const secureTransport = createBridgeSecureTransport({
+  const secureTransport = createTestBridgeSecureTransport({
     sessionId: "session-6",
     relayUrl: "wss://relay.example/relay",
     deviceState: {
@@ -513,6 +742,7 @@ test("resume replay does not advance the replay watermark before a phone ack", (
       sessionId: "session-6",
       keyEpoch: serverHello.keyEpoch,
       lastAppliedBridgeOutboundSeq: 0,
+      bridgeReplayEpoch: serverHello.bridgeReplayEpoch,
     }),
     {
       sendControlMessage() {},
@@ -560,6 +790,90 @@ test("resume replay does not advance the replay watermark before a phone ack", (
   assert.equal(reboundPayload.payloadText, JSON.stringify({ id: "response-6", result: { ok: true } }));
 });
 
+test("resume replay resets overlapping sequence numbers from a previous bridge epoch", () => {
+  const macIdentity = createOkpKeyPair("ed25519");
+  const phoneIdentity = createOkpKeyPair("ed25519");
+  const phoneEphemeral = createOkpKeyPair("x25519");
+  const secureTransport = createTestBridgeSecureTransport({
+    sessionId: "session-7",
+    relayUrl: "wss://relay.example/relay",
+    deviceState: {
+      macDeviceId: "mac-7",
+      macIdentityPrivateKey: macIdentity.privateKey,
+      macIdentityPublicKey: macIdentity.publicKey,
+      trustedPhones: {
+        "phone-7": phoneIdentity.publicKey,
+      },
+    },
+  });
+
+  const replayWireMessages = [];
+  secureTransport.bindLiveSendWireMessage((message) => {
+    replayWireMessages.push(message);
+    return true;
+  });
+
+  const { serverHello, transcriptBytes } = finishHandshake({
+    secureTransport,
+    sessionId: "session-7",
+    macDeviceId: "mac-7",
+    phoneDeviceId: "phone-7",
+    macIdentity,
+    phoneIdentity,
+    phoneEphemeral,
+    handshakeMode: HANDSHAKE_MODE_TRUSTED_RECONNECT,
+    lastAppliedBridgeOutboundSeq: 0,
+    skipResumeState: true,
+  });
+
+  secureTransport.queueOutboundApplicationMessage(
+    JSON.stringify({ id: "initialize", result: { ok: true } }),
+    () => {
+      throw new Error("expected buffered initialize response to wait for resumeState");
+    }
+  );
+
+  secureTransport.handleIncomingWireMessage(
+    JSON.stringify({
+      kind: "resumeState",
+      sessionId: "session-7",
+      keyEpoch: serverHello.keyEpoch,
+      lastAppliedBridgeOutboundSeq: 1,
+      bridgeReplayEpoch: "previous-bridge-process",
+    }),
+    {
+      sendControlMessage() {},
+      onApplicationMessage() {},
+    }
+  );
+
+  const macToPhoneKey = deriveMacToPhoneKey({
+    sessionId: "session-7",
+    macDeviceId: "mac-7",
+    phoneDeviceId: "phone-7",
+    phoneEphemeral,
+    serverHello,
+    transcriptBytes,
+  });
+  assert.equal(replayWireMessages.length, 2);
+  const resetEnvelope = JSON.parse(replayWireMessages[0]);
+  const resetPayload = decryptEnvelope(resetEnvelope, macToPhoneKey);
+  const resetMessage = JSON.parse(resetPayload.payloadText);
+  assert.equal(resetPayload.bridgeOutboundSeq, undefined);
+  assert.equal(resetMessage.method, "remodex/bufferedReplay/reset");
+  assert.deepEqual(resetMessage.params, {
+    remodexBufferedReplayReset: true,
+    resetBridgeOutboundSeqTo: 0,
+    bridgeReplayEpoch: serverHello.bridgeReplayEpoch,
+  });
+
+  const outboundEnvelope = JSON.parse(replayWireMessages[1]);
+  const outboundPayload = decryptEnvelope(outboundEnvelope, macToPhoneKey);
+  assert.equal(resetEnvelope.counter < outboundEnvelope.counter, true);
+  assert.equal(outboundPayload.bridgeOutboundSeq, 1);
+  assert.equal(outboundPayload.payloadText, JSON.stringify({ id: "initialize", result: { ok: true } }));
+});
+
 function finishHandshake({
   secureTransport,
   sessionId,
@@ -580,7 +894,7 @@ function finishHandshake({
   secureTransport.handleIncomingWireMessage(
     JSON.stringify({
       kind: "clientHello",
-      protocolVersion: 1,
+      protocolVersion: SECURE_PROTOCOL_VERSION,
       sessionId,
       handshakeMode,
       phoneDeviceId,
@@ -603,7 +917,7 @@ function finishHandshake({
 
   const transcriptBytes = buildTranscriptBytes({
     sessionId,
-    protocolVersion: 1,
+    protocolVersion: SECURE_PROTOCOL_VERSION,
     handshakeMode,
     keyEpoch: serverHello.keyEpoch,
     macDeviceId,
@@ -659,10 +973,11 @@ function finishHandshake({
     secureTransport.handleIncomingWireMessage(
       JSON.stringify({
         kind: "resumeState",
-        skipPriorRpcResponses,
         sessionId,
         keyEpoch: serverHello.keyEpoch,
         lastAppliedBridgeOutboundSeq,
+        bridgeReplayEpoch: serverHello.bridgeReplayEpoch,
+        skipPriorRpcResponses,
       }),
       {
         sendControlMessage(message) {
@@ -761,6 +1076,40 @@ function decryptEnvelope(envelope, key) {
   return JSON.parse(plaintext.toString("utf8"));
 }
 
+function deriveMacToPhoneKey({
+  sessionId,
+  macDeviceId,
+  phoneDeviceId,
+  phoneEphemeral,
+  serverHello,
+  transcriptBytes,
+}) {
+  const sharedSecret = diffieHellman({
+    privateKey: createPrivateKey({
+      key: {
+        crv: "X25519",
+        d: base64ToBase64Url(phoneEphemeral.privateKey),
+        kty: "OKP",
+        x: base64ToBase64Url(phoneEphemeral.publicKey),
+      },
+      format: "jwk",
+    }),
+    publicKey: createPublicKey({
+      key: {
+        crv: "X25519",
+        kty: "OKP",
+        x: base64ToBase64Url(serverHello.macEphemeralPublicKey),
+      },
+      format: "jwk",
+    }),
+  });
+  const salt = createHash("sha256").update(transcriptBytes).digest();
+  const infoPrefix = `remodex-e2ee-v1|${sessionId}|${macDeviceId}|${phoneDeviceId}|${serverHello.keyEpoch}`;
+  return Buffer.from(
+    hkdfSync("sha256", sharedSecret, salt, Buffer.from(`${infoPrefix}|macToPhone`, "utf8"), 32)
+  );
+}
+
 function base64UrlToBase64(value) {
   const padded = `${value}${"=".repeat((4 - (value.length % 4 || 4)) % 4)}`;
   return padded.replace(/-/g, "+").replace(/_/g, "/");
@@ -769,11 +1118,10 @@ function base64UrlToBase64(value) {
 function base64ToBase64Url(value) {
   return value.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
-
  test("fresh RPC client skips old responses but preserves events and live replies", () => {
  const macIdentity=createOkpKeyPair("ed25519"), phoneIdentity=createOkpKeyPair("ed25519");
  const wire=[];
- const secureTransport=createBridgeSecureTransport({sessionId:"rpc-replay",relayUrl:"wss://relay.example/relay",deviceState:{macDeviceId:"mac-rpc",macIdentityPrivateKey:macIdentity.privateKey,macIdentityPublicKey:macIdentity.publicKey,trustedPhones:{}}});
+ const secureTransport=createTestBridgeSecureTransport({sessionId:"rpc-replay",relayUrl:"wss://relay.example/relay",deviceState:{macDeviceId:"mac-rpc",macIdentityPrivateKey:macIdentity.privateKey,macIdentityPublicKey:macIdentity.publicKey,trustedPhones:{}}});
  secureTransport.bindLiveSendWireMessage(raw=>{wire.push(raw);return true;});
  const handshake=(mode,skip=false)=>finishHandshake({secureTransport,sessionId:"rpc-replay",macDeviceId:"mac-rpc",phoneDeviceId:"phone-rpc",macIdentity,phoneIdentity,phoneEphemeral:createOkpKeyPair("x25519"),handshakeMode:mode,lastAppliedBridgeOutboundSeq:0,skipPriorRpcResponses:skip});
  handshake(HANDSHAKE_MODE_QR_BOOTSTRAP);
@@ -782,9 +1130,9 @@ function base64ToBase64Url(value) {
  secureTransport.queueOutboundApplicationMessage(JSON.stringify({id:"approval",method:"item/commandExecution/requestApproval",params:{}}));
  wire.length=0;
  handshake(HANDSHAKE_MODE_TRUSTED_RECONNECT,true);
- assert.equal(wire.length,2,"notification and server approval are preserved; stale RPC reply omitted");
+ assert.equal(wire.length,3,"notification and server approval are preserved; stale RPC reply omitted");
  secureTransport.queueOutboundApplicationMessage(JSON.stringify({id:"new-initialize",result:{ok:true}}));
- assert.equal(wire.length,3,"new RPC replies still delivered");
+ assert.equal(wire.length,4,"new RPC replies still delivered");
  wire.length=0;secureTransport.bindLiveSendWireMessage(raw=>{wire.push(raw);return true;});
- assert.equal(wire.length,3,"same-epoch RPC remains replayable on relay reconnect");
+ assert.equal(wire.length,4,"same-epoch RPC remains replayable on relay reconnect");
  });

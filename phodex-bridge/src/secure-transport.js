@@ -17,14 +17,13 @@ const {
   sign,
   verify,
 } = require("crypto");
-const os = require("os");
 const {
   getTrustedPhonePublicKey,
   rememberTrustedPhone,
 } = require("./secure-device-state");
 
 const PAIRING_QR_VERSION = 2;
-const SECURE_PROTOCOL_VERSION = 1;
+const SECURE_PROTOCOL_VERSION = 2;
 const HANDSHAKE_TAG = "remodex-e2ee-v1";
 const HANDSHAKE_MODE_QR_BOOTSTRAP = "qr_bootstrap";
 const HANDSHAKE_MODE_TRUSTED_RECONNECT = "trusted_reconnect";
@@ -38,12 +37,15 @@ function createBridgeSecureTransport({
   sessionId,
   relayUrl,
   deviceState,
-  onTrustedPhoneUpdate = null,
+  displayName = require("os").hostname(),
   getDeviceState = null,
   pairingExpiresAt = null,
+  onTrustedPhoneUpdate = null,
+  onSecureSessionReady = null,
   persistTrustedPhone = true,
 }) {
   let currentDeviceState = deviceState;
+  const bridgeDisplayName = normalizeNonEmptyString(displayName);
   let pendingHandshake = null;
   let activeSession = null;
   let liveSendWireMessage = null;
@@ -52,6 +54,9 @@ function createBridgeSecureTransport({
   let lastRelayedBridgeOutboundSeq = 0;
   let currentPairingExpiresAt = pairingExpiresAt ?? (Date.now() + MAX_PAIRING_AGE_MS);
   let nextKeyEpoch = 1;
+  // Sequence numbers restart at 1 with each bridge process. Namespace them so
+  // a phone never mistakes new-process seq 1 for old-process seq 1.
+  const bridgeReplayEpoch = randomBytes(16).toString("hex");
   let nextBridgeOutboundSeq = 1;
   let outboundBufferBytes = 0;
   const outboundBuffer = [];
@@ -65,6 +70,7 @@ function createBridgeSecureTransport({
       macDeviceId: currentDeviceState.macDeviceId,
       macIdentityPublicKey: currentDeviceState.macIdentityPublicKey,
       expiresAt: currentPairingExpiresAt,
+      displayName: bridgeDisplayName,
     };
   }
 
@@ -263,9 +269,11 @@ function createBridgeSecureTransport({
       macEphemeralPublicKey: pendingHandshake.macEphemeralPublicKey,
       serverNonce: serverNonce.toString("base64"),
       keyEpoch,
+      bridgeReplayEpoch,
       expiresAtForTranscript,
       macSignature,
       clientNonce: clientNonceBase64,
+      displayName: bridgeDisplayName,
     });
   }
 
@@ -354,6 +362,7 @@ function createBridgeSecureTransport({
       nextOutboundCounter: 0,
       isResumed: false,
       sendWireMessage: liveSendWireMessage,
+      firstOutboundSeq: nextBridgeOutboundSeq,
     };
 
     nextKeyEpoch = pendingHandshake.keyEpoch + 1;
@@ -373,23 +382,30 @@ function createBridgeSecureTransport({
         { persist: persistTrustedPhone }
       );
       if (previousTrustedPhonePublicKey !== pendingHandshake.phoneIdentityPublicKey) {
-        onTrustedPhoneUpdate?.(currentDeviceState, {phoneDeviceId: pendingHandshake.phoneDeviceId, phoneIdentityPublicKey: pendingHandshake.phoneIdentityPublicKey});
+        onTrustedPhoneUpdate?.(currentDeviceState, {
+          phoneDeviceId: pendingHandshake.phoneDeviceId,
+          phoneIdentityPublicKey: pendingHandshake.phoneIdentityPublicKey,
+        });
       }
     }
     if (pendingHandshake.handshakeMode === HANDSHAKE_MODE_QR_BOOTSTRAP) {
       resetOutboundReplayState();
+      activeSession.firstOutboundSeq = nextBridgeOutboundSeq;
     }
 
+    const completedHandshakeMode = pendingHandshake.handshakeMode;
     pendingHandshake = null;
+    onSecureSessionReady?.({
+      phoneDeviceId: activeSession.phoneDeviceId,
+      handshakeMode: completedHandshakeMode,
+      keyEpoch: activeSession.keyEpoch,
+    });
     sendControlMessage({
       kind: "secureReady",
       sessionId,
       keyEpoch: activeSession.keyEpoch,
       macDeviceId: currentDeviceState.macDeviceId,
-      displayName:
-        normalizeNonEmptyString(currentDeviceState.displayName)
-        || normalizeNonEmptyString(os.hostname())
-        || null,
+      displayName: bridgeDisplayName,
     });
   }
 
@@ -405,17 +421,49 @@ function createBridgeSecureTransport({
     }
 
     const lastAppliedBridgeOutboundSeq = Number(message.lastAppliedBridgeOutboundSeq) || 0;
-    lastRelayedBridgeOutboundSeq = lastAppliedBridgeOutboundSeq;
-    // A restarted Android RPC client has no waiters for earlier connection IDs.
-    // Keep notifications and server requests, but avoid large stale history replies
-    // delaying the new initialize response. Legacy clients retain full replay.
     activeSession.skipPriorRpcResponses = message.skipPriorRpcResponses === true;
-    const missingEntries = replayableOutboundEntries(lastAppliedBridgeOutboundSeq);
+    const phoneReplayEpoch = normalizeNonEmptyString(message.bridgeReplayEpoch);
+    let effectiveReplayCursor = lastAppliedBridgeOutboundSeq;
     activeSession.isResumed = true;
+    if (phoneReplayEpoch !== bridgeReplayEpoch || lastAppliedBridgeOutboundSeq >= nextBridgeOutboundSeq) {
+      // Sequence numbers are process-local. A trusted phone can reconnect after
+      // the bridge restarted with any cursor from the previous process; the
+      // explicit epoch catches overlap that numeric comparison cannot detect.
+      effectiveReplayCursor = Math.max(0, activeSession.firstOutboundSeq - 1);
+      sendBufferedReplayResetMarker(
+        activeSession.sendWireMessage,
+        effectiveReplayCursor,
+        bridgeReplayEpoch
+      );
+    }
+    lastRelayedBridgeOutboundSeq = effectiveReplayCursor;
+    let missingEntries = replayableOutboundEntries(effectiveReplayCursor, {
+      includeCurrentSessionEntries: true,
+    });
+    const replayGap = bufferedReplayGapAfter(effectiveReplayCursor);
+    if (replayGap) {
+      // A partial historical tail is worse than no replay: item-scoped maps no
+      // longer exist after relaunch, so applying it can bind deltas/artifacts to
+      // unrelated rows. Tell the phone to advance past the discarded history;
+      // canonical thread history will rebuild it deterministically.
+      sendBufferedReplayGapMarker(activeSession.sendWireMessage, replayGap);
+      sendBufferedReplayCompleteMarker(activeSession.sendWireMessage);
+      missingEntries = missingEntries.filter((entry) => (
+        entry.bridgeOutboundSeq > replayGap.lastDiscardedBridgeOutboundSeq
+      ));
+    }
+    let replayedHistoricalBacklog = false;
     for (const entry of missingEntries) {
-      if (!sendBufferedEntry(entry, activeSession.sendWireMessage)) {
-        break;
+      const outboundEntry = replayTaggedEntryIfHistorical(entry);
+      if (!sendBufferedEntry(outboundEntry, activeSession.sendWireMessage)) {
+        return;
       }
+      if (outboundEntry !== entry) {
+        replayedHistoricalBacklog = true;
+      }
+    }
+    if (replayedHistoricalBacklog) {
+      sendBufferedReplayCompleteMarker(activeSession.sendWireMessage);
     }
   }
 
@@ -479,15 +527,22 @@ function createBridgeSecureTransport({
   }
 
   function trimOutboundBuffer() {
+    let removeCount = 0;
+    let removedBytes = 0;
     while (
-      outboundBuffer.length > MAX_BRIDGE_OUTBOUND_MESSAGES
-      || outboundBufferBytes > MAX_BRIDGE_OUTBOUND_BYTES
+      (outboundBuffer.length - removeCount) > MAX_BRIDGE_OUTBOUND_MESSAGES
+      || (outboundBufferBytes - removedBytes) > MAX_BRIDGE_OUTBOUND_BYTES
     ) {
-      const removed = outboundBuffer.shift();
-      if (!removed) {
+      const entry = outboundBuffer[removeCount];
+      if (!entry) {
         break;
       }
-      outboundBufferBytes = Math.max(0, outboundBufferBytes - removed.sizeBytes);
+      removedBytes += entry.sizeBytes;
+      removeCount += 1;
+    }
+    if (removeCount > 0) {
+      outboundBuffer.splice(0, removeCount);
+      outboundBufferBytes = Math.max(0, outboundBufferBytes - removedBytes);
     }
   }
 
@@ -519,12 +574,23 @@ function createBridgeSecureTransport({
     return sendWireMessage(JSON.stringify(envelope)) !== false;
   }
 
-  function replayableOutboundEntries(lastAppliedBridgeOutboundSeq) {
-    return outboundBuffer.filter(
-      (entry) => entry.bridgeOutboundSeq > lastAppliedBridgeOutboundSeq
-        && !(activeSession?.skipPriorRpcResponses && entry.isRpcResponse
-          && entry.keyEpoch !== activeSession.keyEpoch)
-    );
+  function replayableOutboundEntries(
+    lastAppliedBridgeOutboundSeq,
+    { includeCurrentSessionEntries = false } = {}
+  ) {
+    return outboundBuffer.filter((entry) => {
+      if (activeSession?.skipPriorRpcResponses && entry.isRpcResponse
+          && entry.keyEpoch !== activeSession.keyEpoch) return false;
+      if (entry.bridgeOutboundSeq > lastAppliedBridgeOutboundSeq) {
+        return true;
+      }
+
+      // Stale cursors from a previous Mac/session must not suppress responses
+      // produced after this secure channel became active, including initialize.
+      return includeCurrentSessionEntries
+        && activeSession
+        && entry.bridgeOutboundSeq >= activeSession.firstOutboundSeq;
+    });
   }
 
   // Replays from the last phone ack instead of local socket writes, so a relay
@@ -534,11 +600,169 @@ function createBridgeSecureTransport({
       return;
     }
 
-    for (const entry of replayableOutboundEntries(lastRelayedBridgeOutboundSeq)) {
-      if (!sendBufferedEntry(entry, activeSession.sendWireMessage)) {
-        break;
+    let replayEntries = replayableOutboundEntries(lastRelayedBridgeOutboundSeq);
+    const replayGap = bufferedReplayGapAfter(lastRelayedBridgeOutboundSeq);
+    if (replayGap) {
+      sendBufferedReplayGapMarker(activeSession.sendWireMessage, replayGap);
+      sendBufferedReplayCompleteMarker(activeSession.sendWireMessage);
+      replayEntries = replayEntries.filter((entry) => (
+        entry.bridgeOutboundSeq > replayGap.lastDiscardedBridgeOutboundSeq
+      ));
+    }
+
+    let replayedHistoricalBacklog = false;
+    for (const entry of replayEntries) {
+      const outboundEntry = replayTaggedEntryIfHistorical(entry);
+      if (!sendBufferedEntry(outboundEntry, activeSession.sendWireMessage)) {
+        return;
+      }
+      if (outboundEntry !== entry) {
+        replayedHistoricalBacklog = true;
       }
     }
+    if (replayedHistoricalBacklog) {
+      sendBufferedReplayCompleteMarker(activeSession.sendWireMessage);
+    }
+  }
+
+  function bufferedReplayGapAfter(lastAppliedBridgeOutboundSeq) {
+    const firstUnappliedEntry = outboundBuffer.find((entry) => (
+      entry.bridgeOutboundSeq > lastAppliedBridgeOutboundSeq
+    ));
+    if (!firstUnappliedEntry
+      || firstUnappliedEntry.bridgeOutboundSeq <= lastAppliedBridgeOutboundSeq + 1) {
+      return null;
+    }
+
+    const lastAvailableBridgeOutboundSeq = outboundBuffer[outboundBuffer.length - 1]?.bridgeOutboundSeq
+      || firstUnappliedEntry.bridgeOutboundSeq;
+    const historicalBoundary = (activeSession?.firstOutboundSeq || firstUnappliedEntry.bridgeOutboundSeq) - 1;
+    const lastDiscardedBridgeOutboundSeq = firstUnappliedEntry.bridgeOutboundSeq <= historicalBoundary
+      ? historicalBoundary
+      : lastAvailableBridgeOutboundSeq;
+    return {
+      expectedBridgeOutboundSeq: lastAppliedBridgeOutboundSeq + 1,
+      firstAvailableBridgeOutboundSeq: firstUnappliedEntry.bridgeOutboundSeq,
+      lastDiscardedBridgeOutboundSeq: Math.max(lastAppliedBridgeOutboundSeq, lastDiscardedBridgeOutboundSeq),
+    };
+  }
+
+  function sendBufferedReplayGapMarker(sendWireMessage, replayGap) {
+    if (!activeSession?.isResumed || typeof sendWireMessage !== "function" || !replayGap) {
+      return;
+    }
+
+    const envelope = encryptEnvelopePayload(
+      {
+        payloadText: JSON.stringify({
+          method: "remodex/bufferedReplay/gap",
+          params: {
+            remodexBufferedReplayGap: true,
+            ...replayGap,
+          },
+        }),
+      },
+      activeSession.macToPhoneKey,
+      SECURE_SENDER_MAC,
+      activeSession.nextOutboundCounter,
+      sessionId,
+      activeSession.keyEpoch
+    );
+    activeSession.nextOutboundCounter += 1;
+    sendWireMessage(JSON.stringify(envelope));
+  }
+
+  function sendBufferedReplayResetMarker(
+    sendWireMessage,
+    resetBridgeOutboundSeqTo,
+    replayEpoch
+  ) {
+    if (!activeSession?.isResumed || typeof sendWireMessage !== "function") {
+      return;
+    }
+
+    const envelope = encryptEnvelopePayload(
+      {
+        payloadText: JSON.stringify({
+          method: "remodex/bufferedReplay/reset",
+          params: {
+            remodexBufferedReplayReset: true,
+            resetBridgeOutboundSeqTo,
+            bridgeReplayEpoch: replayEpoch,
+          },
+        }),
+      },
+      activeSession.macToPhoneKey,
+      SECURE_SENDER_MAC,
+      activeSession.nextOutboundCounter,
+      sessionId,
+      activeSession.keyEpoch
+    );
+    activeSession.nextOutboundCounter += 1;
+    sendWireMessage(JSON.stringify(envelope));
+  }
+
+  // Closes a replayed-backlog burst deterministically: the phone batches tagged
+  // catch-up events and settles its timeline once on this marker instead of
+  // waiting out a debounce. Sent transiently (no bridgeOutboundSeq, never
+  // buffered) so it cannot occupy replay-buffer space or be replayed itself.
+  function sendBufferedReplayCompleteMarker(sendWireMessage) {
+    if (!activeSession?.isResumed || typeof sendWireMessage !== "function") {
+      return;
+    }
+
+    const envelope = encryptEnvelopePayload(
+      {
+        payloadText: JSON.stringify({
+          method: "remodex/bufferedReplay/completed",
+          params: { remodexBufferedReplayComplete: true },
+        }),
+      },
+      activeSession.macToPhoneKey,
+      SECURE_SENDER_MAC,
+      activeSession.nextOutboundCounter,
+      sessionId,
+      activeSession.keyEpoch
+    );
+    activeSession.nextOutboundCounter += 1;
+    sendWireMessage(JSON.stringify(envelope));
+  }
+
+  // Only prior secure-session backlog is catch-up history; same-session retries
+  // may be the phone's first delivery of a still-live turn.
+  function replayTaggedEntryIfHistorical(entry) {
+    if (
+      !activeSession
+      || entry.bridgeOutboundSeq >= activeSession.firstOutboundSeq
+    ) {
+      return entry;
+    }
+
+    return replayTaggedEntry(entry);
+  }
+
+  // Marks replayed notifications so the phone applies them as catch-up content
+  // instead of live activity; replay must never revive running/streaming UI.
+  // RPC responses (id-bearing) and non-object params pass through untouched.
+  function replayTaggedEntry(entry) {
+    const parsed = safeParseJSON(entry.payloadText);
+    if (
+      !parsed
+      || typeof parsed.method !== "string"
+      || parsed.id !== undefined
+      || !parsed.params
+      || typeof parsed.params !== "object"
+      || Array.isArray(parsed.params)
+    ) {
+      return entry;
+    }
+
+    parsed.params.remodexReplayedEvent = true;
+    return {
+      bridgeOutboundSeq: entry.bridgeOutboundSeq,
+      payloadText: JSON.stringify(parsed),
+      sizeBytes: entry.sizeBytes,
+    };
   }
 
   return {
@@ -564,7 +788,7 @@ function isRpcResponse(payloadText) {
 
 function shortId(value) {
   const normalized = normalizeNonEmptyString(value);
-  return normalized ? normalized.slice(0, 8) : "none";
+  return normalized ? createHash("sha256").update(normalized).digest("hex").slice(0, 8) : "none";
 }
 
 function shortFingerprint(publicKeyBase64) {

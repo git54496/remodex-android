@@ -603,7 +603,7 @@ function encryptEnvelope(payloadObject, key, sender, counter, sessionId, keyEpoc
   ]);
   return {
     kind: "encryptedEnvelope",
-    v: 1,
+    v: SECURE_PROTOCOL_VERSION,
     sessionId,
     keyEpoch,
     sender,
