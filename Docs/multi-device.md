@@ -9,3 +9,11 @@ Relay indexes all registered trusted phones. It retains the production short-cod
 The existing desktop catalog filter remains opt-in via `REMODEX_DESKTOP_CATALOG=1`. Multi-device changes do not alter desktop project records, turn permissions or signing keys. A legacy bridge which does not advertise multiplexing retains one live mobile connection, even on this upgraded Relay.
 
 Tests cover concurrent enrollment, trust preservation, both signed resolve requests, colliding RPC IDs, targeted responses, shared notifications, cross-connection ciphertext rejection, reconnect without evicting the other device, and single-winner approvals. Production Relay regression tests cover short-code pairing, legacy single-client behavior, Android roles and proxy forwarding.
+
+## Deployment verification (2026-11-01)
+
+Release `cacb687` was merged into main before deployment to tx-sh. The Relay passed 46 tests, and the bridge passed 142 tests. Two independent clients also initialized and read threads against a real local Codex app-server.
+
+Public WSS verification used the connected PKB110 release app plus an independent encrypted test client. The test client completed 25 consecutive thread-list reads while the phone was force-stopped and relaunched; Relay logs showed both clients connected concurrently again. The phone restored its existing conversation without scanning. The test client then completed its own signed trusted resolve, reconnected and read threads without evicting the phone. Its temporary trust entry was removed afterward. This is one physical phone plus a protocol client, not a two-physical-phone test.
+
+The dedicated local LaunchAgent is `com.remodex.android.bridge`, using the existing private state under `~/.config/remodex-lampten/bridge`. The original `com.remodex.bridge` remains separate. Relay's previous release is retained for rollback. Existing Android release APKs require no rebuild for this protocol-compatible upgrade.
