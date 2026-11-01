@@ -155,7 +155,7 @@ fun ConversationScreen(
     val activePlanEntry = timelineEntries.lastOrNull { entry ->
         entry.kind == TimelineEntryKind.Plan && (entry.body.isNotBlank() || entry.planSteps.isNotEmpty())
     }
-    val visibleEntries = timelineEntries.filterNot { it.id == activePlanEntry?.id }
+    val visibleEntries = remember(timelineEntries, activePlanEntry) { projectTimeline(timelineEntries.filterNot { it.id == activePlanEntry?.id }) }
 
     Column(
         modifier = modifier.fillMaxSize(),
@@ -184,7 +184,7 @@ fun ConversationScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(visibleEntries, key = { it.id }) { entry ->
-                MessageBubble(entry = entry)
+                ProjectedTimelineRow(entry)
             }
         }
 
@@ -242,6 +242,28 @@ fun ConversationScreen(
 // ──────────────────────────────────────────────────────────────
 // Message bubble
 // ──────────────────────────────────────────────────────────────
+
+@Composable
+private fun ProjectedTimelineRow(row: TimelineRow) {
+    if (row.label == null) {
+        row.entries.forEach { MessageBubble(it) }
+        return
+    }
+    var expanded by rememberSaveable(row.id) { mutableStateOf(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "${if (expanded) "⌄" else "›"}  ${row.label}",
+            color = InkSecondary,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(vertical = 12.dp),
+        )
+        if (expanded) {
+            if (row.previousMessages) {
+                projectTimeline(row.entries.map { it.copy(turnCompleted = false) }).forEach { ProjectedTimelineRow(it) }
+            } else row.entries.forEach { MessageBubble(it) }
+        }
+    }
+}
 
 @Composable
 private fun MessageBubble(entry: TimelineEntry) {

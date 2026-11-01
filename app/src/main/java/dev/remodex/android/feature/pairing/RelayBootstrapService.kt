@@ -2463,6 +2463,8 @@ class RelayBootstrapService(
                     timestampLabel = formatTimelineTimestampLabel(itemInstant),
                     body = body,
                     kind = entryKind,
+                    turnId = turnObject.optString("id").takeIf { it.isNotBlank() },
+                    turnCompleted = turnObject.optString("status") in listOf("completed", "failed", "interrupted"),
                     title = decodeTimelineTitle(itemObject, entryKind),
                     detail = decodeTimelineDetail(itemObject, entryKind),
                     planSteps = planSteps,
@@ -2482,7 +2484,7 @@ class RelayBootstrapService(
                 || normalizedType == "message" -> TimelineEntryKind.Chat
 
             normalizedType == "reasoning" -> TimelineEntryKind.Thinking
-            normalizedType == "toolcall" -> TimelineEntryKind.ToolActivity
+            normalizedType in setOf("toolcall", "mcptoolcall", "dynamictoolcall", "websearch", "websearchtoolcall") -> TimelineEntryKind.ToolActivity
             normalizedType == "filechange"
                 || normalizedType == "diff" -> TimelineEntryKind.FileChange
             normalizedType == "commandexecution" -> TimelineEntryKind.CommandExecution
@@ -3570,6 +3572,7 @@ class RelayBootstrapService(
             timestampLabel = "Now",
             body = body,
             kind = entryKind,
+            turnId = turnId,
             title = decodeTimelineTitle(fallbackObject, entryKind),
             detail = decodeTimelineDetail(fallbackObject, entryKind),
             planSteps = planSteps,

@@ -1,5 +1,12 @@
 package dev.remodex.android.app
 
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.sample
+import dev.remodex.android.feature.threads.ConversationCacheStore
+import dev.remodex.android.feature.threads.ConversationSnapshot
 import android.app.Application
 import android.net.Uri
 import android.os.SystemClock
@@ -317,6 +324,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val deviceHistoryStore = SharedPrefsDeviceHistoryStore(application)
     private val liveThreadSessionStore = SharedPrefsLiveThreadSessionStore(application)
     private val runtimeConfigStore = SharedPrefsRuntimeConfigStore(application)
+    private val conversationCacheStore = ConversationCacheStore(application)
+    private var cacheHost: String? = null
     private val imageAttachmentCacheStore = SharedPrefsImageAttachmentCacheStore(application)
     val relayBootstrapService = RelayBootstrapService(trustedReconnectPersistence = trustedReconnectStore)
     private val relayRequestMutex = Mutex()
@@ -857,6 +866,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         get() = liveThreadActionState?.threadId == selectedThreadId &&
             liveThreadActionState?.action == LiveThreadAction.Continuing
 
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    private fun observeConversationCache() {
+        viewModelScope.launch {
+            snapshotFlow {
+                if (isShowingLiveThreads && cacheHost != null) cacheHost!! to ConversationSnapshot(threadSummaries, threadDetails) else null
+            }.sample(250).collect { snapshot ->
+                if (snapshot != null) withContext(Dispatchers.IO) { conversationCacheStore.write(snapshot.first, snapshot.second) }
+            }
+        }
+    }
+
+    private fun restoreConversationCache(host: String) {
+        val snapshot = conversationCacheStore.read(host)
+        cacheHost = host
+        threadDetails = snapshot.details
+        if (snapshot.summaries.isNotEmpty()) {
+            threadSummaries = applyLocalThreadSessionState(snapshot.summaries, liveThreadSessionStore.read())
+            isShowingLiveThreads = true
+            selectedThreadId = resolveRecoveredSelectedThreadId(threadSummaries, null, liveThreadSessionStore.read().selectedThreadId)
+        }
+    }
+
     init {
         trustedReconnectRecord = trustedReconnectStore.read()
         deviceHistory = deviceHistoryStore.readAll()
@@ -867,6 +898,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 deviceHistory = deviceHistoryStore.readAll()
             }
         }
+        trustedReconnectRecord?.let { restoreConversationCache(it.macDeviceId) }
+        observeConversationCache()
         val persistedRuntimeConfig = runtimeConfigStore.read()
         selectedModelId = persistedRuntimeConfig.selectedModelId
         globalSelectedReasoningEffort = persistedRuntimeConfig.selectedReasoningEffort
@@ -1117,7 +1150,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                 }
-                threadDetails = emptyMap()
+                trustedReconnectRecord?.let { restoreConversationCache(it.macDeviceId) }
                 liveThreadActionState = null
                 isShowingLiveThreads = true
                 if (openConversationOnSuccess) {
@@ -1128,7 +1161,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     preferredThreadId = if (isShowingLiveThreads) selectedThreadId else null,
                 )
                 liveThreads.firstOrNull { it.id == recoveredThreadId }?.let { thread ->
-                    threadDetails = mapOf(thread.id to loadingLiveThreadDetail(thread))
+                    threadDetails = threadDetails + (thread.id to (threadDetails[thread.id] ?: loadingLiveThreadDetail(thread)))
                     loadLiveThreadDetail(thread.id)
                 }
                 pairingStatusMessage = PairingStatusMessage(
@@ -1384,7 +1417,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             bootstrapPhase = RelayBootstrapPhase.Verified
             recordDeviceUsage()
             val liveThreads = fetchLiveThreadListWithArchivedReconciliation()
-            if (resetDetailCache) threadDetails = emptyMap()
+            if (resetDetailCache || cacheHost != reconnectResult.trustedRecord.macDeviceId) restoreConversationCache(reconnectResult.trustedRecord.macDeviceId)
             liveThreadActionState = null
             isShowingLiveThreads = true
             if (openConversation) currentScreen = AppScreen.Home
@@ -1395,11 +1428,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (reloadSelectedDetail) {
                 liveThreads.firstOrNull { it.id == recoveredThreadId }?.let { thread ->
                     if (isPendingMaterializationThread(thread.id)) {
-                        threadDetails = mapOf(
-                            thread.id to pendingMaterializationThreadDetail(thread, threadDetails[thread.id]),
-                        )
+                        threadDetails = threadDetails + (thread.id to pendingMaterializationThreadDetail(thread, threadDetails[thread.id]))
                     } else {
-                        threadDetails = mapOf(thread.id to loadingLiveThreadDetail(thread))
+                        threadDetails = threadDetails + (thread.id to (threadDetails[thread.id] ?: loadingLiveThreadDetail(thread)))
                         val liveDetail = withRelayRequestLock {
                             relayBootstrapService.fetchThreadDetail(thread.id)
                         }
@@ -2329,6 +2360,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun applyRuntimeTurnCompleted(event: LiveThreadRuntimeEvent.TurnCompleted) {
         markThreadMaterialized(event.threadId)
         finalizeRuntimeStructuredEntries(event.threadId)
+        val completedTurnId = event.turnId ?: threadDetails[event.threadId]?.activeTurnId
+        if (completedTurnId != null) {
+            runtimeAssistantEntriesByThreadId = runtimeAssistantEntriesByThreadId + (event.threadId to
+                runtimeAssistantEntriesByThreadId[event.threadId].orEmpty().mapValues { (_, entry) ->
+                    if (entry.turnId == completedTurnId) entry.copy(turnCompleted = true, isStreaming = false) else entry
+                })
+            threadDetails[event.threadId]?.let { detail ->
+                threadDetails = threadDetails + (event.threadId to detail.copy(entries = detail.entries.map { entry ->
+                    if (entry.turnId == completedTurnId) entry.copy(turnCompleted = true, isStreaming = false) else entry
+                }))
+            }
+        }
         val detail = threadDetails[event.threadId] ?: return
         val updated = detail.copy(
             stateLabel = runtimeStateLabel(event.status),
@@ -2359,6 +2402,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             speaker = "Codex",
             timestampLabel = "Now",
             body = nextBody,
+            turnId = event.turnId,
+            isStreaming = true,
         )
         storeRuntimeAssistantEntry(event.threadId, entryId, entry)
         val detail = threadDetails[event.threadId] ?: return
@@ -2385,6 +2430,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             speaker = "Codex",
             timestampLabel = "Now",
             body = event.text,
+            turnId = event.turnId,
         )
         storeRuntimeAssistantEntry(event.threadId, entryId, entry)
         val detail = threadDetails[event.threadId] ?: return
@@ -2398,7 +2444,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         storeRuntimeAssistantEntry(
             threadId = event.threadId,
             entryId = event.entry.id,
-            entry = event.entry,
+            entry = event.entry.copy(turnId = event.turnId ?: event.entry.turnId),
         )
         // When a completed (non-streaming) structured entry arrives, finalize it
         // explicitly so any lingering streaming indicator is cleared immediately
@@ -2445,6 +2491,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             speaker = "You",
             timestampLabel = "Now",
             body = event.text,
+            turnId = event.turnId,
         )
         val updated = detail.copy(entries = detail.entries + entry)
         threadDetails = threadDetails + (event.threadId to updated)

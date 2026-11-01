@@ -24,7 +24,7 @@ internal fun collapseThinkingEntries(entries: List<TimelineEntry>): List<Timelin
         }
 
         val normalizedEntry = entry.copy(body = normalizeThinkingEntryBody(entry.body))
-        val previousIndex = latestReusableThinkingIndex(result)
+        val previousIndex = latestReusableThinkingIndex(result, entry.turnId)
         if (previousIndex == null) {
             if (!shouldHideThinkingEntry(normalizedEntry)) {
                 result += normalizedEntry
@@ -40,6 +40,7 @@ internal fun collapseThinkingEntries(entries: List<TimelineEntry>): List<Timelin
             title = normalizedEntry.title ?: previous.title,
             detail = normalizedEntry.detail ?: previous.detail,
             isStreaming = normalizedEntry.isStreaming,
+            turnCompleted = normalizedEntry.turnCompleted,
         )
         if (shouldHideThinkingEntry(merged)) {
             result.removeAt(previousIndex)
@@ -50,10 +51,10 @@ internal fun collapseThinkingEntries(entries: List<TimelineEntry>): List<Timelin
     return result.filterNot(::shouldHideThinkingEntry)
 }
 
-private fun latestReusableThinkingIndex(entries: List<TimelineEntry>): Int? {
+private fun latestReusableThinkingIndex(entries: List<TimelineEntry>, turnId: String?): Int? {
     for (index in entries.indices.reversed()) {
         val candidate = entries[index]
-        if (candidate.kind == TimelineEntryKind.Chat) {
+        if (candidate.kind == TimelineEntryKind.Chat || candidate.turnId != turnId) {
             break
         }
         if (candidate.kind == TimelineEntryKind.Thinking) {
