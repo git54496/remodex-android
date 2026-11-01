@@ -5,7 +5,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -81,11 +79,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -584,127 +579,6 @@ private fun ActivePlanAccessoryCard(
                 text = if (isExpanded) "Hide details" else footer,
                 style = MaterialTheme.typography.labelSmall,
                 color = InkTertiary,
-            )
-        }
-    }
-}
-
-@Composable
-internal fun MarkdownBody(
-    text: String,
-    textColor: Color,
-    bodyStyle: TextStyle,
-    modifier: Modifier = Modifier,
-    codeBlockBackground: Color = Color.Black.copy(alpha = 0.04f),
-    monospaceByDefault: Boolean = false,
-) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        markdownBlocks(text).forEach { block ->
-            when (block) {
-                is MarkdownBlock.Heading -> Text(markdownAnnotatedString(block.text, textColor, false),
-                    color = textColor, style = bodyStyle.copy(fontWeight = FontWeight.SemiBold,
-                        fontSize = if (block.level <= 2) 20.sp else 18.sp))
-                is MarkdownBlock.ListGroup -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    block.items.forEach { item ->
-                        Row(Modifier.fillMaxWidth().padding(start = (item.indent.coerceAtMost(24) * 8).dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(item.marker, color = textColor, style = bodyStyle, modifier = Modifier.widthIn(min = 18.dp))
-                            Text(markdownAnnotatedString(item.text, textColor, monospaceByDefault), color = textColor,
-                                style = bodyStyle, modifier = Modifier.weight(1f))
-                        }
-                    }
-                }
-                is MarkdownBlock.Paragraph -> {
-                    Text(
-                        text = markdownAnnotatedString(
-                            text = block.text,
-                            defaultColor = textColor,
-                            monospaceByDefault = monospaceByDefault,
-                        ),
-                        style = bodyStyle,
-                        color = textColor,
-                    )
-                }
-
-                is MarkdownBlock.Code -> {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = codeBlockBackground,
-                    ) {
-                        Text(
-                            text = block.text.trimEnd(),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .horizontalScroll(rememberScrollState())
-                                .padding(12.dp),
-                            style = bodyStyle.copy(fontFamily = FontFamily.Monospace),
-                            color = textColor,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-private fun markdownAnnotatedString(
-    text: String,
-    defaultColor: Color,
-    monospaceByDefault: Boolean,
-): AnnotatedString {
-    val regex = Regex("(\\[([^\\]]+)\\]\\(([^)]+)\\))|(`[^`]+`)|(\\*\\*[^*]+\\*\\*)")
-    return buildAnnotatedString {
-        var cursor = 0
-        for (match in regex.findAll(text)) {
-            if (match.range.first > cursor) {
-                append(text.substring(cursor, match.range.first))
-            }
-            val token = match.value
-            when {
-                token.startsWith("[") -> {
-                    val label = match.groupValues.getOrNull(2).orEmpty().ifBlank {
-                        match.groupValues.getOrNull(3).orEmpty()
-                    }
-                    pushStyle(
-                        SpanStyle(
-                            color = Copper,
-                            fontWeight = FontWeight.Medium,
-                        ),
-                    )
-                    append(label)
-                    pop()
-                }
-
-                token.startsWith("`") -> {
-                    pushStyle(
-                        SpanStyle(
-                            fontFamily = FontFamily.Monospace,
-                            background = Color.Black.copy(alpha = 0.06f),
-                        ),
-                    )
-                    append(token.removePrefix("`").removeSuffix("`"))
-                    pop()
-                }
-
-                token.startsWith("**") -> {
-                    pushStyle(SpanStyle(fontWeight = FontWeight.SemiBold))
-                    append(token.removePrefix("**").removeSuffix("**"))
-                    pop()
-                }
-            }
-            cursor = match.range.last + 1
-        }
-        if (cursor < text.length) {
-            append(text.substring(cursor))
-        }
-        if (monospaceByDefault) {
-            addStyle(
-                SpanStyle(fontFamily = FontFamily.Monospace, color = defaultColor),
-                start = 0,
-                end = length,
             )
         }
     }

@@ -1,8 +1,8 @@
 [versions]
-agp = "8.5.2"
-kotlin = "1.9.24"
-composeBom = "2024.06.00"
-composeCompiler = "1.5.14"
+agp = "8.6.1"
+kotlin = "2.1.20"
+composeBom = "2025.03.00"
+markdown = "0.33.0"
 coreKtx = "1.13.1"
 appcompat = "1.7.0"
 lifecycle = "2.8.3"
@@ -14,12 +14,15 @@ espressoCore = "3.6.1"
 json = "20240303"
 okhttp = "4.12.0"
 bcprov = "1.78.1"
-coil = "2.6.0"
+coil = "2.7.0"
 cameraX = "1.3.4"
 mlkitBarcode = "17.2.0"
 windowManager = "1.3.0"
 
 [libraries]
+markdown-core = { module = "com.mikepenz:multiplatform-markdown-renderer", version.ref = "markdown" }
+markdown-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown" }
+markdown-coil2 = { module = "com.mikepenz:multiplatform-markdown-renderer-coil2", version.ref = "markdown" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }
@@ -52,3 +55,4 @@ androidx-window = { group = "androidx.window", name = "window", version.ref = "w
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

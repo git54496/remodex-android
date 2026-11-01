@@ -32,6 +32,7 @@ Remodex Android is an early but usable self-hostable Android client. The current
 - text send
 - stop / continue controls
 - structured timeline rendering
+- flat assistant replies with GitHub-flavored Markdown (tables, nested lists, task lists, quotes, links, images, and code blocks)
 - image send and basic history image handling
 - local-first self-hosting with the included bridge and relay code
 

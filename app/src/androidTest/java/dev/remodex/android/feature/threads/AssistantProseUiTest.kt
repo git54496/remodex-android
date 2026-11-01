@@ -18,12 +18,16 @@ import org.junit.Test
 class AssistantProseUiTest {
     @get:Rule val compose = createComposeRule()
     private val reply = TimelineEntry("reply", "Codex", "12:34", "Confirmed **both devices**.\n\n- iOS connected\n- Android connected")
+    private fun awaitMarkdown(text: String) {
+        compose.waitUntil(5_000) { compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() }
+    }
     @Test fun assistantUsesFullWidthWithoutSpeakerOrTime() {
         compose.setContent { MaterialTheme { Box(Modifier.width(300.dp)) { TimelineMessageContent(reply) } } }
         compose.onNodeWithTag("assistant-prose").assertWidthIsEqualTo(300.dp)
         compose.onNodeWithText("Codex").assertDoesNotExist()
         compose.onNodeWithText("12:34").assertDoesNotExist()
-        compose.onAllNodesWithText("•").assertCountEquals(2)
+        awaitMarkdown("iOS connected")
+        compose.onAllNodesWithText("• ").assertCountEquals(2)
         compose.onNodeWithText("iOS connected").assertIsDisplayed()
     }
     @Test fun copyPreservesCompleteMarkdownAndShowsFeedback() {
@@ -60,8 +64,9 @@ class AssistantProseUiTest {
     }
     @Test fun numberedAndNestedListsRenderAsSeparateMarkers() {
         compose.setContent { MaterialTheme { AssistantMessageContent(reply.copy(body = "3. Outer item\n   - Nested item\n4. Next item")) } }
-        compose.onNodeWithText("3.").assertIsDisplayed()
-        compose.onNodeWithText("4.").assertIsDisplayed()
+        awaitMarkdown("Outer item")
+        compose.onNodeWithText("3. ").assertIsDisplayed()
+        compose.onNodeWithText("4. ").assertIsDisplayed()
         val outer = compose.onNodeWithText("Outer item").fetchSemanticsNode().boundsInRoot
         val nested = compose.onNodeWithText("Nested item").fetchSemanticsNode().boundsInRoot
         assertTrue(nested.left > outer.left)
