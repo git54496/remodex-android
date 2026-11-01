@@ -29,6 +29,10 @@ class MessageCardModelsTest {
         val rows = resolveQuestionAnswers(listOf(q, user))
         assertEquals("Yes", questionRows(rows.first()).single().answer)
         assertEquals("Ready?\nYes", rows.last().body)
+        val legacy = TimelineEntry("legacy", "Codex", "Now", "Ready?\n- Yes\n- No")
+        val restored = resolveQuestionAnswers(listOf(legacy, user)).first()
+        assertEquals(TimelineEntryKind.Questions, restored.kind)
+        assertEquals("Yes", questionRows(restored).single().answer)
         assertNull(questionRows(resolveQuestionAnswers(listOf(q.copy(id = "another"), user)).first()).single().answer)
     }
 

@@ -110,7 +110,20 @@ internal fun resolveQuestionAnswers(entries: List<TimelineEntry>): List<Timeline
         if (!entry.speaker.equals("You", true)) return@forEachIndexed
         val reply = nativeQuestionReply(entry.body) ?: return@forEachIndexed
         resolved[index] = entry.copy(body = reply.rows.joinToString("\n\n") { "${it.first}\n${it.second}" })
-        val target = (index - 1 downTo 0).firstOrNull { resolved[it].kind == TimelineEntryKind.Questions && resolved[it].id == reply.itemId }
+        val target = (index - 1 downTo 0).firstOrNull { resolved[it].id == reply.itemId }
+            ?: (index - 1 downTo 0).firstOrNull { candidate ->
+                // Older bridges flatten async items to assistant prose. Recover only
+                // from a canonical native reply plus the matching question text.
+                val original = resolved[candidate]
+                original.kind == TimelineEntryKind.Chat && original.speaker == "Codex" &&
+                    reply.rows.size == 1 && original.body.startsWith(reply.rows.first().first + "\n")
+            }
+        if (target != null && resolved[target].kind != TimelineEntryKind.Questions) {
+            val original = resolved[target]
+            val questions = JSONArray(reply.rows.map { JSONObject().put("title", it.first) })
+            resolved[target] = original.copy(kind = TimelineEntryKind.Questions,
+                structuredPayload = JSONObject().put("questions", questions).toString())
+        }
         if (target != null && questionRows(resolved[target]).map { it.title } == reply.rows.map { it.first }) {
             resolved[target] = resolved[target].copy(structuredPayload = resolved[target].payload().put("resolvedAnswers", JSONArray(reply.rows.map { it.second })).toString())
         }
