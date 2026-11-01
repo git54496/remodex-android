@@ -34,10 +34,15 @@ class AssistantProseUiTest {
         var previous: android.content.ClipData? = null
         compose.runOnIdle { previous = systemClipboard.primaryClip }
         try {
+            compose.mainClock.autoAdvance = false
             compose.onNodeWithContentDescription("Copy reply").performClick()
+            compose.mainClock.advanceTimeBy(32)
             compose.onNodeWithContentDescription("Copied").assertIsDisplayed()
             compose.runOnIdle { assertEquals(reply.body, clipboard.getText()?.text) }
-        } finally { compose.runOnIdle { previous?.let(systemClipboard::setPrimaryClip) ?: systemClipboard.clearPrimaryClip() } }
+        } finally {
+            compose.mainClock.autoAdvance = true
+            compose.runOnIdle { previous?.let(systemClipboard::setPrimaryClip) ?: systemClipboard.clearPrimaryClip() }
+        }
     }
     @Test fun streamingReplyDoesNotExposePrematureCopy() {
         compose.setContent { MaterialTheme { AssistantMessageContent(reply.copy(isStreaming = true)) } }
