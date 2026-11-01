@@ -452,7 +452,6 @@ fun MainContent(
                     isLive = vm.bridge.phase == ConnectionPhase.Ready,
                     hasSavedDevice = vm.trustedReconnectRecord != null,
                     reconnecting = vm.isRecoveringTrustedLiveSession,
-                    connectionError = vm.pairingStatusMessage?.takeIf { it.tone == dev.remodex.android.feature.pairing.PairingStatusTone.Error }?.body,
                     onReconnect = { vm.reconnectTrustedMac() },
                     transcribeVoice = vm.relayBootstrapService::transcribeVoice,
                     isSending = vm.isSendingTurn,

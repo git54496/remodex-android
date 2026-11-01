@@ -141,7 +141,7 @@ internal fun rememberVoiceInput(transcribe: suspend (VoiceClip) -> String, onTra
     val toggle: () -> Unit = {
         if (state.recording) state.recorder.stop()
         else if (!state.transcribing) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) begin()
+            if (state.clip != null || ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) begin()
             else permission.launch(Manifest.permission.RECORD_AUDIO)
         }
     }

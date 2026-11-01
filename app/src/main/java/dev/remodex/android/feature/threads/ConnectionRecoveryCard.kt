@@ -37,7 +37,7 @@ internal fun ConnectionRecoveryCard(snapshot: ConnectionRecovery, reconnect: () 
                     Text("Connection ·", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
                     Text(snapshot.status, style = MaterialTheme.typography.labelSmall, color = tint)
                 }
-                Text(snapshot.summary, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
+                Text(snapshot.summary, style = MaterialTheme.typography.bodyMedium, maxLines = 2)
             }
             if (snapshot.progressing) CircularProgressIndicator(Modifier.size(18.dp), color = tint, strokeWidth = 2.dp)
             else Text("Reconnect", color = tint, style = MaterialTheme.typography.labelMedium)

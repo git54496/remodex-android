@@ -1331,7 +1331,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         openConversation: Boolean = currentScreen != AppScreen.Settings,
     ) {
         viewModelScope.launch {
-            reconnectTrustedLiveSession(openConversation = openConversation)
+            val preserveTranscript = isShowingLiveThreads && selectedDetail != null
+            reconnectTrustedLiveSession(openConversation = openConversation,
+                preferredThreadId = selectedThreadId,
+                reloadSelectedDetail = !preserveTranscript,
+                resetDetailCache = !preserveTranscript)
         }
     }
 
