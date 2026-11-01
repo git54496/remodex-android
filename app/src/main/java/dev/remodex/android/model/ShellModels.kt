@@ -36,6 +36,7 @@ enum class TimelineEntryKind {
     CommandExecution,
     Plan,
     SubagentAction,
+    Questions,
     System,
 }
 
@@ -85,6 +86,7 @@ data class TimelineEntry(
     val timestampLabel: String,
     val body: String,
     val kind: TimelineEntryKind = TimelineEntryKind.Chat,
+    val structuredPayload: String? = null,
     val turnId: String? = null,
     val turnCompleted: Boolean = false,
     val title: String? = null,

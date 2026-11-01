@@ -2442,7 +2442,7 @@ class RelayBootstrapService(
             for (itemIndex in 0 until (items?.length() ?: 0)) {
                 val itemObject = items?.optJSONObject(itemIndex) ?: continue
                 val normalizedType = normalizeTimelineItemType(itemObject.optString("type"))
-                val entryKind = decodeTimelineEntryKind(normalizedType)
+                val entryKind = if (itemObject?.optString("delivery") == "async" && itemObject.optJSONArray("questions") != null) TimelineEntryKind.Questions else decodeTimelineEntryKind(normalizedType)
                 val body = decodeTimelineBody(itemObject, normalizedType, entryKind)
                 val planSteps = if (entryKind == TimelineEntryKind.Plan) {
                     decodeTimelinePlanSteps(itemObject)
@@ -2463,6 +2463,7 @@ class RelayBootstrapService(
                     timestampLabel = formatTimelineTimestampLabel(itemInstant),
                     body = body,
                     kind = entryKind,
+                    structuredPayload = itemObject.takeIf { entryKind in setOf(TimelineEntryKind.FileChange, TimelineEntryKind.SubagentAction, TimelineEntryKind.Questions) }?.toString(),
                     turnId = turnObject.optString("id").takeIf { it.isNotBlank() },
                     turnCompleted = turnObject.optString("status") in listOf("completed", "failed", "interrupted"),
                     title = decodeTimelineTitle(itemObject, entryKind),
@@ -2488,6 +2489,7 @@ class RelayBootstrapService(
             normalizedType == "filechange"
                 || normalizedType == "diff" -> TimelineEntryKind.FileChange
             normalizedType == "commandexecution" -> TimelineEntryKind.CommandExecution
+            normalizedType in setOf("userinputprompt", "requestuserinput") -> TimelineEntryKind.Questions
             normalizedType == "plan" -> TimelineEntryKind.Plan
             normalizedType.startsWith("collab")
                 || normalizedType == "subagentaction" -> TimelineEntryKind.SubagentAction
@@ -2502,6 +2504,7 @@ class RelayBootstrapService(
     ): String {
         val directText = decodeTimelineText(itemObject)
         return when (entryKind) {
+            TimelineEntryKind.Questions -> directText.ifBlank { "Questions" }
             TimelineEntryKind.Chat -> directText
             TimelineEntryKind.Thinking -> directText.ifBlank { "Reasoning step recorded." }
             TimelineEntryKind.FileChange -> directText.ifBlank { "File changes were recorded in this turn." }
@@ -3378,6 +3381,10 @@ class RelayBootstrapService(
                 val itemType = normalizeTimelineItemType(itemObject?.optString("type").orEmpty())
                 val role = itemObject?.optString("role").orEmpty()
                 val threadId = extractNotificationThreadId(params) ?: return null
+                if (itemObject?.optString("delivery") == "async" && itemObject.optJSONArray("questions") != null) {
+                    val entry = decodeRuntimeStructuredEntry(extractNotificationTurnId(params), extractNotificationItemId(params, eventObject), itemObject, itemType, null, false)
+                    return entry?.let { LiveThreadRuntimeEvent.StructuredEntryUpdated(threadId, extractNotificationTurnId(params), it) }
+                }
                 val text = when {
                     itemObject != null && isAssistantMessageItem(itemType, role) ->
                         decodeTimelineText(itemObject).trim()
@@ -3545,7 +3552,7 @@ class RelayBootstrapService(
         isStreaming: Boolean,
     ): TimelineEntry? {
         val fallbackObject = itemObject ?: JSONObject()
-        val entryKind = decodeTimelineEntryKind(normalizedType)
+        val entryKind = if (itemObject?.optString("delivery") == "async" && itemObject.optJSONArray("questions") != null) TimelineEntryKind.Questions else decodeTimelineEntryKind(normalizedType)
         if (entryKind == TimelineEntryKind.Chat) {
             return null
         }
@@ -3572,6 +3579,7 @@ class RelayBootstrapService(
             timestampLabel = "Now",
             body = body,
             kind = entryKind,
+            structuredPayload = fallbackObject.takeIf { entryKind in setOf(TimelineEntryKind.FileChange, TimelineEntryKind.SubagentAction, TimelineEntryKind.Questions) }?.toString(),
             turnId = turnId,
             title = decodeTimelineTitle(fallbackObject, entryKind),
             detail = decodeTimelineDetail(fallbackObject, entryKind),

@@ -80,6 +80,7 @@ private fun encodeTimelineEntry(value: TimelineEntry): JSONObject = JSONObject()
     .put("timestampLabel", value.timestampLabel)
     .put("body", value.body)
     .put("kind", value.kind.name)
+    .put("structuredPayload", value.structuredPayload)
     .put("turnId", value.turnId)
     .put("turnCompleted", value.turnCompleted)
     .put("title", value.title)
@@ -94,6 +95,7 @@ private fun decodeTimelineEntry(json: JSONObject): TimelineEntry = TimelineEntry
     timestampLabel = json.getString("timestampLabel"),
     body = json.getString("body"),
     kind = TimelineEntryKind.valueOf(json.getString("kind")),
+    structuredPayload = json.optString("structuredPayload").takeIf { it.isNotBlank() },
     turnId = if (json.has("turnId") && !json.isNull("turnId")) json.getString("turnId") else null,
     turnCompleted = json.optBoolean("turnCompleted"),
     title = if (json.has("title") && !json.isNull("title")) json.getString("title") else null,

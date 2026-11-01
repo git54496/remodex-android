@@ -151,7 +151,7 @@ fun ConversationScreen(
     modifier: Modifier = Modifier,
 ) {
     val isBusy = isSending || isStopping || isContinuing
-    val timelineEntries = remember(detail.entries) { collapseThinkingEntries(detail.entries) }
+    val timelineEntries = remember(detail.entries) { collapseThinkingEntries(resolveQuestionAnswers(detail.entries)) }
     val activePlanEntry = timelineEntries.lastOrNull { entry ->
         entry.kind == TimelineEntryKind.Plan && (entry.body.isNotBlank() || entry.planSteps.isNotEmpty())
     }
@@ -270,6 +270,10 @@ private fun ProjectedTimelineRow(row: TimelineRow) {
 
 @Composable
 private fun MessageBubble(entry: TimelineEntry) {
+    if (entry.kind in setOf(TimelineEntryKind.FileChange, TimelineEntryKind.SubagentAction, TimelineEntryKind.Questions)) {
+        SpecializedMessageCard(entry)
+        return
+    }
     if (entry.kind == TimelineEntryKind.Thinking) {
         ThinkingTimelineEntry(entry = entry)
         return
@@ -416,6 +420,7 @@ private fun StructuredTimelineEntry(entry: TimelineEntry) {
         TimelineEntryKind.Plan -> Color(0xFFFFF6E8)
         TimelineEntryKind.ToolActivity -> Color(0xFFF5F7FA)
         TimelineEntryKind.SubagentAction -> Color(0xFFF0F4FF)
+        TimelineEntryKind.Questions -> Color(0xFFF5F7FA)
         TimelineEntryKind.System -> SystemBubble
         TimelineEntryKind.Chat -> AssistantBubble
     }
