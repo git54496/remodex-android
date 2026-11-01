@@ -164,6 +164,10 @@ fun AppDrawerLayout(
                             onArchiveThread = { vm.archiveThread(it) },
                             onDeleteThread = { vm.deleteThread(it) },
                             onOpenSettings = { vm.openSettings() },
+                            onOpenChatGptHistory = {
+                                vm.currentScreen = AppScreen.ChatGptHistory
+                                vm.updateDrawerVisibility(false)
+                            },
                             onOpenDevices = { vm.openDevices() },
                             modifier = Modifier
                                 .width(animatedSidebarWidth)
@@ -273,6 +277,10 @@ fun AppDrawerLayout(
                             onDeleteThread = { vm.deleteThread(it) },
                             onOpenSettings = {
                                 vm.openSettings()
+                                vm.updateDrawerVisibility(false)
+                            },
+                            onOpenChatGptHistory = {
+                                vm.currentScreen = AppScreen.ChatGptHistory
                                 vm.updateDrawerVisibility(false)
                             },
                             onOpenDevices = {

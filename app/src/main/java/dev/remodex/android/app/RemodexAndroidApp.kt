@@ -186,6 +186,16 @@ fun MainContent(
     modifier: Modifier = Modifier,
 ) {
     when (vm.currentScreen) {
+        AppScreen.ChatGptHistory -> androidx.compose.runtime.key(vm.trustedReconnectRecord, vm.bridge.phase) {
+            dev.remodex.android.feature.chatgpt.ChatGptHistoryScreen(
+                connected = vm.bridge.phase == ConnectionPhase.Ready,
+                loadPage = vm::fetchChatGptHistory,
+                loadDetail = vm::fetchChatGptConversation,
+                onBack = vm::navigateHome,
+                modifier = modifier,
+            )
+        }
+
         AppScreen.Pairing -> {
             val context = LocalContext.current
             var showPairingScanner by remember { mutableStateOf(false) }

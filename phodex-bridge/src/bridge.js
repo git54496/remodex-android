@@ -23,6 +23,7 @@ const { handleGitRequest } = require("./git-handler");
 const { handleThreadContextRequest } = require("./thread-context-handler");
 const { handleWorkspaceRequest } = require("./workspace-handler");
 const { createNotificationsHandler } = require("./notifications-handler");
+const { createChatGptHistoryHandler } = require("./chatgpt-history-handler");
 const { createVoiceHandler, resolveVoiceAuth } = require("./voice-handler");
 const {
   composeSanitizedAuthStatusFromSettledResults,
@@ -166,6 +167,7 @@ function startBridge({
     env: process.env,
     logPrefix: "[remodex]",
   });
+  const chatGptHistory = createChatGptHistoryHandler({ sendCodexRequest });
   const voiceHandler = createVoiceHandler({
     sendCodexRequest,
     logPrefix: "[remodex]",
@@ -460,6 +462,7 @@ function startBridge({
     if (handleBridgeManagedAccountRequest(rawMessage, sendApplicationResponse)) {
       return;
     }
+    if (chatGptHistory.handleRequest(rawMessage, sendApplicationResponse)) return;
     if (voiceHandler.handleVoiceRequest(rawMessage, sendApplicationResponse)) {
       return;
     }

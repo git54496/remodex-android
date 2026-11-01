@@ -530,6 +530,34 @@ class RelayBootstrapService(
         clearLiveThreadRuntimeState()
     }
 
+    suspend fun fetchChatGptHistory(offset: Int): dev.remodex.android.feature.chatgpt.ChatGptPage =
+        dev.remodex.android.feature.chatgpt.decodeChatGptPage(
+            requestChatGptHistory("chatgpt/history/list", JSONObject().put("offset", offset).put("limit", 30)), offset,
+        )
+
+    suspend fun fetchChatGptConversation(id: String): dev.remodex.android.feature.chatgpt.ChatGptDetail =
+        dev.remodex.android.feature.chatgpt.decodeChatGptDetail(
+            requestChatGptHistory("chatgpt/history/read", JSONObject().put("id", id)), id,
+        )
+
+    private suspend fun requestChatGptHistory(method: String, params: JSONObject): JSONObject {
+        val session = requireActiveSession("Connect to your Mac to view ChatGPT history.")
+        val id = "chatgpt-history-${UUID.randomUUID()}"
+        sendEncryptedAppPayload(session, JSONObject().put("id", id).put("method", method).put("params", params).toString())
+        val response = try {
+            awaitEncryptedRpcResponse(session, id, timeoutMs = 65_000L)
+        } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+            throw RelayBootstrapException("ChatGPT history timed out. Try again.")
+        }
+        response.optJSONObject("error")?.let {
+            throw RelayBootstrapException(if (it.optInt("code") == -32601)
+                "Update the Mac bridge to view ChatGPT history."
+            else it.optString("message").ifBlank { "Could not load ChatGPT history." })
+        }
+        return response.optJSONObject("result")
+            ?: throw RelayBootstrapException("The bridge returned invalid ChatGPT history.")
+    }
+
     suspend fun fetchThreadList(limit: Int? = null, archived: Boolean = false): List<ThreadSummary> {
         val session = requireActiveSession(
             "The secure session is not active yet. Reconnect before loading live threads.",
@@ -3860,9 +3888,10 @@ class RelayBootstrapService(
     private suspend fun awaitEncryptedRpcResponse(
         session: ActiveSecureRelaySession,
         expectedRequestId: String,
+        timeoutMs: Long = relayWaitTimeoutMs,
     ): JSONObject {
         var matchedResponse: JSONObject? = null
-        withTimeout(relayWaitTimeoutMs) {
+        withTimeout(timeoutMs) {
             while (matchedResponse == null) {
                 when (val event = session.events.receive()) {
                     RelaySocketEvent.Open -> continue

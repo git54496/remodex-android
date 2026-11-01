@@ -95,6 +95,7 @@ fun SidebarContent(
     onDeleteThread: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenDevices: (() -> Unit)? = null,
+    onOpenChatGptHistory: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var searchQuery by remember { mutableStateOf("") }
@@ -138,6 +139,12 @@ fun SidebarContent(
                 style = MaterialTheme.typography.titleLarge,
                 color = Ink,
             )
+        }
+
+        onOpenChatGptHistory?.let { open ->
+            androidx.compose.material3.TextButton(onClick = open, modifier = Modifier.padding(horizontal = 8.dp)) {
+                Text("ChatGPT history", color = Ink)
+            }
         }
 
         // Search

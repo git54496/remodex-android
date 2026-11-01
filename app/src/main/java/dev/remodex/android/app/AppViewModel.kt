@@ -103,6 +103,7 @@ private val defaultReasoningOptions = listOf(
 )
 
 enum class AppScreen {
+    ChatGptHistory,
     Home,
     Pairing,
     Settings,
@@ -984,6 +985,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openPairing() {
         currentScreen = AppScreen.Pairing
+    }
+
+    suspend fun fetchChatGptHistory(offset: Int) = withRelayRequestLock {
+        relayBootstrapService.fetchChatGptHistory(offset)
+    }
+
+    suspend fun fetchChatGptConversation(id: String) = withRelayRequestLock {
+        relayBootstrapService.fetchChatGptConversation(id)
     }
 
     fun navigateHome() {
