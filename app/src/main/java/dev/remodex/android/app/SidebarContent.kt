@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.UnfoldLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.Folder
@@ -98,6 +99,7 @@ fun SidebarContent(
     onOpenChatGptHistory: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
+    var collapsedGroupIds by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
     var searchQuery by remember { mutableStateOf("") }
     var showProjectPicker by remember { mutableStateOf(false) }
     val filteredThreads = if (searchQuery.isBlank()) {
@@ -139,6 +141,12 @@ fun SidebarContent(
                 style = MaterialTheme.typography.titleLarge,
                 color = Ink,
             )
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = {
+                collapsedGroupIds = ArrayList(threads.map { it.desktopGroupId ?: it.projectPath }.distinct())
+            }) {
+                Icon(Icons.Default.UnfoldLess, contentDescription = "Collapse all projects", tint = InkSecondary)
+            }
         }
 
         onOpenChatGptHistory?.let { open ->
@@ -371,6 +379,12 @@ fun SidebarContent(
                 item(key = "group-$groupId") {
                     CollapsibleProjectGroup(
                         projectPath = projectPath,
+                        isExpanded = groupId !in collapsedGroupIds,
+                        onToggleExpanded = {
+                            collapsedGroupIds = ArrayList(if (groupId in collapsedGroupIds) {
+                                collapsedGroupIds.filterNot { it == groupId }
+                            } else collapsedGroupIds + groupId)
+                        },
                         displayName = first.desktopGroupName ?: projectDisplayName(projectPath),
                         threads = projectThreads,
                         selectedThreadId = selectedThreadId,
@@ -452,6 +466,8 @@ fun SidebarContent(
 @Composable
 private fun CollapsibleProjectGroup(
     projectPath: String,
+    isExpanded: Boolean,
+    onToggleExpanded: () -> Unit,
     displayName: String,
     threads: List<ThreadSummary>,
     selectedThreadId: String?,
@@ -463,7 +479,6 @@ private fun CollapsibleProjectGroup(
     onArchiveThread: (String) -> Unit,
     onDeleteThread: (String) -> Unit,
 ) {
-    var isExpanded by rememberSaveable(projectPath) { mutableStateOf(true) }
     var showAll by rememberSaveable(projectPath) { mutableStateOf(false) }
 
 
@@ -491,7 +506,7 @@ private fun CollapsibleProjectGroup(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(12.dp))
-                    .clickable { isExpanded = !isExpanded }
+                    .clickable(onClick = onToggleExpanded)
                     .padding(vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
