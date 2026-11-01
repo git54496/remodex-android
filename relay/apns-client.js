@@ -8,6 +8,7 @@ const crypto = require("crypto");
 const http2 = require("http2");
 
 const APNS_TOKEN_TTL_SECONDS = 50 * 60;
+const APNS_NOTIFICATION_TTL_SECONDS = 5 * 60;
 
 function createAPNsClient({
   teamId = "",
@@ -29,6 +30,7 @@ function createAPNsClient({
     title,
     body,
     payload = {},
+    collapseId,
   } = {}) {
     if (!isConfigured()) {
       throw apnsError("apns_not_configured", "APNs credentials are not configured.", 503);
@@ -52,6 +54,10 @@ function createAPNsClient({
         "apns-topic": bundleId,
         "apns-push-type": "alert",
         "apns-priority": "10",
+        "apns-expiration": String(
+          Math.floor(now() / 1000) + APNS_NOTIFICATION_TTL_SECONDS
+        ),
+        ...(collapseId ? { "apns-collapse-id": collapseId } : {}),
         "content-type": "application/json",
       }, JSON.stringify({
         aps: {
@@ -108,6 +114,22 @@ function createAPNsClient({
 
 function sendRequest(client, headers, body) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const settleReject = (error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const settleResolve = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
+    client.on("error", (error) => {
+      settleReject(apnsError("apns_session_error", `APNs session error: ${error?.message || error}`, 502));
+    });
+
     const request = client.request(headers);
     const chunks = [];
     let responseHeaders = null;
@@ -120,12 +142,12 @@ function sendRequest(client, headers, body) {
       chunks.push(chunk);
     });
     request.on("end", () => {
-      resolve({
+      settleResolve({
         status: Number(responseHeaders?.[":status"] || 0),
         body: safeParseJSON(chunks.join("")),
       });
     });
-    request.on("error", reject);
+    request.on("error", settleReject);
     request.end(body);
   });
 }

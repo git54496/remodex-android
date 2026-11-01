@@ -15,17 +15,19 @@ test("APNs authorization tokens use a 64-byte JOSE ES256 signature", async () =>
   const { privateKey } = crypto.generateKeyPairSync("ec", {
     namedCurve: "prime256v1",
   });
-  let capturedAuthorizationHeader = null;
+  let capturedHeaders = null;
 
   const client = createAPNsClient({
     teamId: "TEAM123456",
     keyId: "KEY1234567",
     bundleId: "com.example.remodex",
     privateKey: privateKey.export({ type: "pkcs8", format: "pem" }),
+    now: () => 1_700_000_000_000,
     http2Connect() {
       return {
+        on() {},
         request(headers) {
-          capturedAuthorizationHeader = headers.authorization;
+          capturedHeaders = headers;
           const request = new EventEmitter();
           request.setEncoding = () => {};
           request.end = () => {
@@ -47,13 +49,109 @@ test("APNs authorization tokens use a 64-byte JOSE ES256 signature", async () =>
     apnsEnvironment: "development",
     title: "Ready",
     body: "Response ready",
+    collapseId: "a".repeat(64),
   });
 
-  const token = String(capturedAuthorizationHeader || "").replace(/^bearer\s+/i, "");
+  const token = String(capturedHeaders?.authorization || "").replace(/^bearer\s+/i, "");
   const [, , encodedSignature] = token.split(".");
   const signature = decodeBase64URL(encodedSignature);
 
   assert.equal(signature.length, 64);
+  assert.equal(capturedHeaders["apns-expiration"], "1700000300");
+  assert.equal(capturedHeaders["apns-collapse-id"], "a".repeat(64));
+});
+
+test("a session-level error rejects sendNotification instead of crashing the process", async () => {
+  const { privateKey } = crypto.generateKeyPairSync("ec", {
+    namedCurve: "prime256v1",
+  });
+
+  const client = createAPNsClient({
+    teamId: "TEAM123456",
+    keyId: "KEY1234567",
+    bundleId: "com.example.remodex",
+    privateKey: privateKey.export({ type: "pkcs8", format: "pem" }),
+    http2Connect() {
+      const session = new EventEmitter();
+      session.request = () => {
+        const request = new EventEmitter();
+        request.setEncoding = () => {};
+        request.end = () => {
+          process.nextTick(() => {
+            session.emit("error", new Error("ECONNREFUSED"));
+          });
+        };
+        return request;
+      };
+      session.close = () => {};
+      return session;
+    },
+  });
+
+  await assert.rejects(
+    client.sendNotification({
+      deviceToken: "aa bb cc",
+      apnsEnvironment: "development",
+      title: "Ready",
+      body: "Response ready",
+    }),
+    (error) => {
+      assert.equal(error.code, "apns_session_error");
+      return true;
+    }
+  );
+});
+
+test("sendNotification settles only once when a session error and a request error both fire", async () => {
+  const { privateKey } = crypto.generateKeyPairSync("ec", {
+    namedCurve: "prime256v1",
+  });
+  let requestErrorHandler = null;
+
+  const client = createAPNsClient({
+    teamId: "TEAM123456",
+    keyId: "KEY1234567",
+    bundleId: "com.example.remodex",
+    privateKey: privateKey.export({ type: "pkcs8", format: "pem" }),
+    http2Connect() {
+      const session = new EventEmitter();
+      session.request = () => {
+        const request = new EventEmitter();
+        request.setEncoding = () => {};
+        const originalOn = request.on.bind(request);
+        request.on = (event, handler) => {
+          if (event === "error") {
+            requestErrorHandler = handler;
+          }
+          return originalOn(event, handler);
+        };
+        request.end = () => {
+          process.nextTick(() => {
+            session.emit("error", new Error("session down"));
+            requestErrorHandler(new Error("stream reset"));
+          });
+        };
+        return request;
+      };
+      session.close = () => {};
+      return session;
+    },
+  });
+
+  let rejectionCount = 0;
+  try {
+    await client.sendNotification({
+      deviceToken: "aa bb cc",
+      apnsEnvironment: "development",
+      title: "Ready",
+      body: "Response ready",
+    });
+  } catch (error) {
+    rejectionCount += 1;
+    assert.equal(error.code, "apns_session_error");
+  }
+
+  assert.equal(rejectionCount, 1);
 });
 
 function decodeBase64URL(value) {

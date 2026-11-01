@@ -35,6 +35,7 @@ const {
   resolveBridgeRelaySession,
 } = require("./secure-device-state");
 const { createBridgeSecureTransport } = require("./secure-transport");
+const { createMultiDeviceTransport } = require("./multi-device-transport");
 const { createRolloutLiveMirrorController } = require("./rollout-live-mirror");
 
 const execFileAsync = promisify(execFile);
@@ -110,6 +111,7 @@ function startBridge({
     ? CODEX_HANDSHAKE_STATE_WARM
     : CODEX_HANDSHAKE_STATE_COLD;
   const forwardedInitializeRequestIds = new Set();
+  const waitingInitializeRequestIds = [];
   const bridgeManagedCodexRequestWaiters = new Map();
   const forwardedRequestMethodsById = new Map();
   const relaySanitizedResponseMethodsById = new Map();
@@ -129,7 +131,8 @@ function startBridge({
     requestId: null,
     startedAt: 0,
   };
-  const secureTransport = createBridgeSecureTransport({
+  const multiDevice = process.env.REMODEX_MULTI_DEVICE === "1";
+  const secureTransport = (multiDevice ? createMultiDeviceTransport : createBridgeSecureTransport)({
     sessionId,
     relayUrl: relayBaseUrl,
     deviceState,
@@ -327,6 +330,7 @@ function startBridge({
       // The relay uses this per-session secret to authenticate the first push registration.
       headers: {
         "x-role": "mac",
+        ...(multiDevice ? {"x-remodex-multiplex": "1"} : {}),
         "x-notification-secret": notificationSecret,
         ...buildMacRegistrationHeaders(deviceState),
       },
@@ -823,6 +827,10 @@ function startBridge({
 
     if (method === "initialize" && parsed.id != null) {
       if (!shouldShortCircuitBridgeInitialize(codexHandshakeState)) {
+        if (forwardedInitializeRequestIds.size > 0) {
+          waitingInitializeRequestIds.push(parsed.id);
+          return true;
+        }
         forwardedInitializeRequestIds.add(String(parsed.id));
         return false;
       }
@@ -865,6 +873,9 @@ function startBridge({
     }
 
     forwardedInitializeRequestIds.delete(responseKey);
+    for (const id of waitingInitializeRequestIds.splice(0)) {
+      sendApplicationResponse(JSON.stringify({...parsed, id}));
+    }
     codexHandshakeState = nextCodexHandshakeStateAfterInitializeResponse(
       codexHandshakeState,
       parsed
@@ -1304,6 +1315,7 @@ function buildHeartbeatBridgeStatus(
 
 module.exports = {
   buildMacRegistration,
+  buildMacRegistrationHeaders,
   buildHeartbeatBridgeStatus,
   consumeBridgeInitializedNotification,
   hasRelayConnectionGoneStale,

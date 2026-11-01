@@ -39,6 +39,9 @@ function createBridgeSecureTransport({
   relayUrl,
   deviceState,
   onTrustedPhoneUpdate = null,
+  getDeviceState = null,
+  pairingExpiresAt = null,
+  persistTrustedPhone = true,
 }) {
   let currentDeviceState = deviceState;
   let pendingHandshake = null;
@@ -47,7 +50,7 @@ function createBridgeSecureTransport({
   // Tracks the highest bridge seq the phone has definitely acked, so replay
   // decisions never depend on best-effort local socket writes.
   let lastRelayedBridgeOutboundSeq = 0;
-  let currentPairingExpiresAt = Date.now() + MAX_PAIRING_AGE_MS;
+  let currentPairingExpiresAt = pairingExpiresAt ?? (Date.now() + MAX_PAIRING_AGE_MS);
   let nextKeyEpoch = 1;
   let nextBridgeOutboundSeq = 1;
   let outboundBufferBytes = 0;
@@ -132,6 +135,7 @@ function createBridgeSecureTransport({
   }
 
   function handleClientHello(message, sendControlMessage) {
+    currentDeviceState = getDeviceState?.() || currentDeviceState;
     const protocolVersion = Number(message.protocolVersion);
     const incomingSessionId = normalizeNonEmptyString(message.sessionId);
     const handshakeMode = normalizeNonEmptyString(message.handshakeMode);
@@ -266,6 +270,7 @@ function createBridgeSecureTransport({
   }
 
   function handleClientAuth(message, sendControlMessage) {
+    currentDeviceState = getDeviceState?.() || currentDeviceState;
     if (!pendingHandshake) {
       sendControlMessage(createSecureError({
         code: "unexpected_client_auth",
@@ -364,10 +369,11 @@ function createBridgeSecureTransport({
       currentDeviceState = rememberTrustedPhone(
         currentDeviceState,
         pendingHandshake.phoneDeviceId,
-        pendingHandshake.phoneIdentityPublicKey
+        pendingHandshake.phoneIdentityPublicKey,
+        { persist: persistTrustedPhone }
       );
       if (previousTrustedPhonePublicKey !== pendingHandshake.phoneIdentityPublicKey) {
-        onTrustedPhoneUpdate?.(currentDeviceState);
+        onTrustedPhoneUpdate?.(currentDeviceState, {phoneDeviceId: pendingHandshake.phoneDeviceId, phoneIdentityPublicKey: pendingHandshake.phoneIdentityPublicKey});
       }
     }
     if (pendingHandshake.handshakeMode === HANDSHAKE_MODE_QR_BOOTSTRAP) {
