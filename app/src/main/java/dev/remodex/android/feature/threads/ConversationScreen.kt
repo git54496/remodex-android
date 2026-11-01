@@ -673,15 +673,16 @@ private fun ComposerArea(
                 .padding(horizontal = 8.dp, vertical = 8.dp),
         ) {
             VoiceAccessory(voice, toggleVoice)
-            IconButton(
-                onClick = { controlsExpanded = !controlsExpanded },
+            Box(
                 modifier = Modifier.padding(start = 16.dp, bottom = 4.dp)
-                    .size(36.dp).clip(CircleShape)
+                    .size(24.dp).clip(RoundedCornerShape(6.dp))
                     .background(Color.White.copy(alpha = 0.92f))
-                    .border(0.5.dp, Color.LightGray, CircleShape),
+                    .border(0.5.dp, Color.LightGray, RoundedCornerShape(6.dp))
+                    .clickable { controlsExpanded = !controlsExpanded },
+                contentAlignment = Alignment.Center,
             ) {
                 Icon(Icons.Default.ChevronRight, if (controlsExpanded) "Hide composer controls" else "Show composer controls",
-                    tint = InkSecondary, modifier = Modifier.rotate(if (controlsExpanded) 90f else 0f))
+                    tint = InkSecondary, modifier = Modifier.size(16.dp).rotate(if (controlsExpanded) 90f else 0f))
             }
             // ── Composer card (input + bottom bar wrapped together) ──
             Surface(
