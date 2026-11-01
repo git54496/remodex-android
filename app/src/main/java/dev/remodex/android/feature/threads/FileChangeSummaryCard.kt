@@ -17,11 +17,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import dev.remodex.android.model.TimelineEntry
 
-internal fun summarizeFileChanges(entries: List<TimelineEntry>): List<FileChangeRow> =
-    entries.flatMap(::fileChangeRows).filter { it.diff.isNotBlank() }.groupBy { it.path }.map { (path, changes) ->
-        FileChangeRow(path, changes.last().action, changes.map { it.diff.trim() }.distinct().joinToString("\n"))
-    }
-
 @Composable
 internal fun FileChangeSummaryCard(entries: List<TimelineEntry>) {
     val files = remember(entries) { summarizeFileChanges(entries) }

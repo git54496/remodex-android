@@ -1,0 +1,69 @@
+[
+  {
+    "type": "fileChange",
+    "id": "exec-c4935f86-5d99-4761-8acb-633b503e3ca8",
+    "changes": [
+      {
+        "path": "app/src/main/java/dev/remodex/android/feature/threads/CjkMarkdownFlavour.kt",
+        "kind": {
+          "type": "add"
+        },
+        "diff": "package dev.remodex.android.feature.threads\n\nimport org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor\nimport org.intellij.markdown.flavours.gfm.StrikeThroughDelimiterParser\nimport org.intellij.markdown.parser.sequentialparsers.DelimiterParser\nimport org.intellij.markdown.parser.sequentialparsers.EmphasisLikeParser\nimport org.intellij.markdown.parser.sequentialparsers.SequentialParser\nimport org.intellij.markdown.parser.sequentialparsers.SequentialParserManager\nimport org.intellij.markdown.parser.sequentialparsers.TokensCache\nimport org.intellij.markdown.parser.sequentialparsers.impl.EmphStrongDelimiterParser\n\n/** GFM with support for unspaced Chinese strong text, e.g. **注意：**正文. */\ninternal class CjkMarkdownFlavour : GFMFlavourDescriptor() {\n    private val gfmParsers = super.sequentialParserManager\n    override val sequentialParserManager = object : SequentialParserManager() {\n        override fun getParserSequence(): List<SequentialParser> =\n            gfmParsers.getParserSequence().map { parser ->\n                if (parser is EmphasisLikeParser) {\n                    EmphasisLikeParser(CjkStrongDelimiterParser(), StrikeThroughDelimiterParser())\n                } else parser\n            }\n    }\n}\n\nprivate class CjkStrongDelimiterParser : DelimiterParser() {\n    private val standard = EmphStrongDelimiterParser()\n\n    override fun scan(tokens: TokensCache, iterator: TokensCache.Iterator, delimiters: MutableList<Info>): Int {\n        val first = delimiters.size\n        val steps = standard.scan(tokens, iterator, delimiters)\n        // Adjust only ** runs. The library still handles escapes, pairing, nesting, and\n        // unmatched delimiters. Its earlier parsers exclude code and link destinations.\n        if (steps == 2 && iterator.firstChar == '*') {\n            val before = iterator.charLookup(-1)\n            val after = tokens.getRawCharAt(iterator.start + 2)\n            for (index in first until delimiters.size) {\n                if (isCjkPunctuation(after)) delimiters[index].canOpen = true\n                if (isCjkPunctuation(before)) delimiters[index].canClose = true\n            }\n        }\n        return steps\n    }\n\n    override fun process(\n        tokens: TokensCache,\n        iterator: TokensCache.Iterator,\n        delimiters: MutableList<Info>,\n        result: SequentialParser.ParsingResultBuilder,\n    ) = standard.process(tokens, iterator, delimiters, result)\n\n    private fun isCjkPunctuation(char: Char): Boolean {\n        val punctuation = when (Character.getType(char)) {\n            Character.CONNECTOR_PUNCTUATION.toInt(), Character.DASH_PUNCTUATION.toInt(),\n            Character.START_PUNCTUATION.toInt(), Character.END_PUNCTUATION.toInt(),\n            Character.INITIAL_QUOTE_PUNCTUATION.toInt(), Character.FINAL_QUOTE_PUNCTUATION.toInt(),\n            Character.OTHER_PUNCTUATION.toInt() -> true\n            else -> false\n        }\n        if (!punctuation) return false\n        return when (Character.UnicodeBlock.of(char)) {\n            Character.UnicodeBlock.CJK_SYMBOLS_AND_PUNCTUATION,\n            Character.UnicodeBlock.HALFWIDTH_AND_FULLWIDTH_FORMS,\n            Character.UnicodeBlock.CJK_COMPATIBILITY_FORMS,\n            Character.UnicodeBlock.VERTICAL_FORMS -> true\n            // Chinese prose also commonly uses these Unicode quotes, dashes, and ellipsis.\n            else -> char in '\\u2018'..'\\u201f' || char == '—' || char == '…'\n        }\n    }\n}\n"
+      },
+      {
+        "path": "app/src/main/java/dev/remodex/android/feature/threads/MarkdownBody.kt",
+        "kind": {
+          "type": "update",
+          "move_path": null
+        },
+        "diff": "@@ -45,3 +45,2 @@\n import kotlinx.coroutines.flow.conflate\n-import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor\n import org.intellij.markdown.parser.MarkdownParser\n@@ -63,3 +62,3 @@\n         snapshotFlow { latestText }.conflate().collect { content ->\n-            val flavour = GFMFlavourDescriptor()\n+            val flavour = CjkMarkdownFlavour()\n             value = MarkdownState(Input(content, true, flavour, MarkdownParser(flavour), ReferenceLinkHandlerImpl())).parse()\n"
+      },
+      {
+        "path": "app/src/test/java/dev/remodex/android/feature/threads/CjkMarkdownFlavourTest.kt",
+        "kind": {
+          "type": "add"
+        },
+        "diff": "package dev.remodex.android.feature.threads\n\nimport org.intellij.markdown.MarkdownElementTypes\nimport org.intellij.markdown.ast.ASTNode\nimport org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor\nimport org.intellij.markdown.parser.MarkdownParser\nimport org.junit.Assert.*\nimport org.junit.Test\n\nclass CjkMarkdownFlavourTest {\n    private fun parse(source: String) = MarkdownParser(CjkMarkdownFlavour()).buildMarkdownTreeFromString(source)\n    private fun nodes(node: ASTNode): List<ASTNode> = listOf(node) + node.children.flatMap(::nodes)\n    private fun strong(source: String): List<String> = nodes(parse(source))\n        .filter { it.type == MarkdownElementTypes.STRONG }\n        .map { source.substring(it.startOffset + 2, it.endOffset - 2) }\n    private fun tree(node: ASTNode): String = \"${node.type}[${node.startOffset},${node.endOffset}]\" +\n        node.children.joinToString(prefix = \"(\", postfix = \")\", transform = ::tree)\n    private fun assertStandard(source: String) {\n        assertEquals(source, tree(MarkdownParser(GFMFlavourDescriptor()).buildMarkdownTreeFromString(source)), tree(parse(source)))\n    }\n\n    @Test fun chinesePunctuationCanCloseStrongBeforeUnspacedText() {\n        for (punctuation in listOf(\"：\", \"，\", \"。\", \"；\", \"！\", \"？\", \"、\", \"…\", \"—\", \"）\", \"」\", \"》\", \"”\")) {\n            val label = \"验证限制$punctuation\"\n            assertEquals(label, listOf(label), strong(\"**$label**本次\"))\n        }\n    }\n\n    @Test fun chineseOpeningPunctuationCanOpenStrongAfterUnspacedText() {\n        for (label in listOf(\"“重点”\", \"‘重点’\", \"（重点）\", \"「重点」\", \"《重点》\", \"【重点】\", \"：说明\")) {\n            assertEquals(label, listOf(label), strong(\"这是**$label**说明\"))\n        }\n    }\n\n    @Test fun adjacentStrongSpansKeepTheirOwnBoundaries() {\n        assertEquals(listOf(\"第一：\", \"第二：\", \"第三：\"), strong(\"**第一：**正文**第二：**继续**第三：**结束\"))\n    }\n\n    @Test fun mixedChineseAndLatinTextIsSupported() {\n        assertEquals(listOf(\"注意：\"), strong(\"**注意：**English\"))\n        assertEquals(listOf(\"（重点）\"), strong(\"prefix**（重点）**suffix\"))\n    }\n\n    @Test fun boldWorksInsideTablesListsQuotesAndLinkLabels() {\n        for (source in listOf(\n            \"| 内容 |\\n| --- |\\n| **注意：**正文 |\",\n            \"- **注意：**正文\", \"> **注意：**正文\", \"[**注意：**正文](https://example.com)\",\n        )) assertEquals(source, listOf(\"注意：\"), strong(source))\n    }\n\n    @Test fun nestedItalicAndStrikethroughRemainInsideStrong() {\n        val source = \"**注意 *重点* ~~旧版~~：**正文\"\n        assertEquals(listOf(\"注意 *重点* ~~旧版~~：\"), strong(source))\n        assertTrue(nodes(parse(source)).any { it.type == MarkdownElementTypes.EMPH })\n        assertTrue(nodes(parse(source)).any { it.type.toString() == \"STRIKETHROUGH\" })\n    }\n\n    @Test fun codeAndEscapedMarkersStayLiteral() {\n        for (source in listOf(\n            \"`**验证限制：**本次`\", \"``**验证限制：**本次``\",\n            \"```text\\n**验证限制：**本次\\n```\", \"~~~\\n**验证限制：**本次\\n~~~\",\n            \"    **验证限制：**本次\", \"\\\\*\\\\*验证限制：\\\\*\\\\*本次\",\n        )) { assertStandard(source); assertTrue(source, strong(source).isEmpty()) }\n    }\n\n    @Test fun destinationsAutolinksAndHtmlAttributesAreNotRewritten() {\n        for (source in listOf(\n            \"[link](https://example.com/**注意：**正文)\", \"![alt](https://example.com/**注意：**正文.png)\",\n            \"<https://example.com/**注意：**正文>\", \"<span title=\\\"**注意：**正文\\\">text</span>\",\n            \"[ref]: https://example.com/**注意：**正文\\n\\n[ref]\",\n        )) assertStandard(source)\n    }\n\n    @Test fun incompleteStreamingTextDoesNotInventClosingMarkers() {\n        for (source in listOf(\"**验证限制：\", \"**验证限制：*\", \"**验证限制：**本次\")) {\n            assertEquals(if (source.endsWith(\"本次\")) listOf(\"验证限制：\") else emptyList<String>(), strong(source))\n        }\n    }\n\n    @Test fun existingGfmAndWhitespaceRulesArePreserved() {\n        for (source in listOf(\n            \"**English:**word\", \"word**(text)**word\", \"**普通中文**正文\", \"*斜体：*正文\",\n            \"__下划线：__正文\", \"***粗斜体***\", \"**末尾空格： **正文\", \"** ：开头空格**\",\n            \"**bold** *italic* ~~strike~~\", \"**标签：** **正文**\", \"***\\n\\n- [x] done\",\n        )) assertStandard(source)\n    }\n\n    @Test fun sourceOffsetsStillAddressOriginalMarkdownIncludingEmoji() {\n        val source = \"😀前文**“重点”：**正文🚀\"\n        val node = nodes(parse(source)).single { it.type == MarkdownElementTypes.STRONG }\n        assertEquals(\"**“重点”：**\", source.substring(node.startOffset, node.endOffset))\n        assertEquals(source.indexOf(\"**\"), node.startOffset)\n    }\n}\n"
+      }
+    ],
+    "status": "completed"
+  },
+  {
+    "type": "fileChange",
+    "id": "exec-8df4a21f-640d-4059-822e-c163b9691305",
+    "changes": [
+      {
+        "path": "app/src/androidTest/java/dev/remodex/android/feature/threads/MarkdownBodyUiTest.kt",
+        "kind": {
+          "type": "update",
+          "move_path": null
+        },
+        "diff": "@@ -44,2 +44,48 @@\n \n+    private fun assertBoldText(text: String, bold: String) {\n+        val rendered = compose.onNodeWithText(text, substring = true).fetchSemanticsNode()\n+            .config[SemanticsProperties.Text].single()\n+        assertFalse(rendered.text.contains(\"**\"))\n+        assertTrue(rendered.spanStyles.any {\n+            it.item.fontWeight == FontWeight.Bold && rendered.text.substring(it.start, it.end) == bold\n+        })\n+    }\n+\n+    @Test fun chinesePunctuationRendersBoldInProseAndTables() {\n+        show(\"**验证限制：**本次\\n\\n这是**“重点”**说明\\n\\n| 内容 |\\n| --- |\\n| **表格：**正常 |\")\n+        awaitText(\"表格：正常\")\n+        assertBoldText(\"验证限制：本次\", \"验证限制：\")\n+        assertBoldText(\"这是“重点”说明\", \"“重点”\")\n+        assertBoldText(\"表格：正常\", \"表格：\")\n+        compose.onNodeWithTag(\"assistant-prose\").assertWidthIsEqualTo(300.dp)\n+        capture(\"markdown-cjk.png\")\n+    }\n+\n+    @Test fun streamingChineseBoldAppearsWhenClosingMarkersArrive() {\n+        var source by mutableStateOf(\"**验证限制：\")\n+        compose.setContent { MaterialTheme { AssistantMessageContent(reply(source).copy(isStreaming = true)) } }\n+        awaitText(\"**验证限制：\")\n+        compose.runOnIdle { source += \"**本次\" }\n+        awaitText(\"验证限制：本次\")\n+        assertBoldText(\"验证限制：本次\", \"验证限制：\")\n+        compose.onNodeWithText(\"**验证限制：\").assertDoesNotExist()\n+        compose.onNodeWithContentDescription(\"Copy reply\").assertDoesNotExist()\n+    }\n+\n+    @Test fun chineseBoldCopyKeepsOriginalMarkdownWithoutInjectedCharacters() {\n+        val source = \"**验证限制：**本次，这是**“重点”**说明。\"\n+        show(source)\n+        awaitText(\"验证限制：本次，这是“重点”说明。\")\n+        val context = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext\n+        val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)\n+        var previous: android.content.ClipData? = null\n+        compose.runOnIdle { previous = clipboard.primaryClip }\n+        try {\n+            compose.onNodeWithContentDescription(\"Copy reply\").performClick()\n+            compose.runOnIdle { assertEquals(source, clipboard.primaryClip?.getItemAt(0)?.text?.toString()) }\n+        } finally {\n+            compose.runOnIdle { previous?.let(clipboard::setPrimaryClip) ?: clipboard.clearPrimaryClip() }\n+        }\n+    }\n+\n     @Test fun tableScrollsAndLongCellsWrapInsideFlatReply() {\n"
+      },
+      {
+        "path": "app/src/test/java/dev/remodex/android/feature/threads/CjkMarkdownFlavourTest.kt",
+        "kind": {
+          "type": "update",
+          "move_path": null
+        },
+        "diff": "@@ -5,2 +5,3 @@\n import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor\n+import org.intellij.markdown.flavours.gfm.GFMElementTypes\n import org.intellij.markdown.parser.MarkdownParser\n@@ -54,3 +55,3 @@\n         assertTrue(nodes(parse(source)).any { it.type == MarkdownElementTypes.EMPH })\n-        assertTrue(nodes(parse(source)).any { it.type.toString() == \"STRIKETHROUGH\" })\n+        assertTrue(nodes(parse(source)).any { it.type == GFMElementTypes.STRIKETHROUGH })\n     }\n"
+      }
+    ],
+    "status": "completed"
+  },
+  {
+    "type": "fileChange",
+    "id": "exec-241f0698-64de-4187-8774-ea777af478b8",
+    "changes": [
+      {
+        "path": "app/src/androidTest/java/dev/remodex/android/feature/threads/MarkdownBodyUiTest.kt",
+        "kind": {
+          "type": "update",
+          "move_path": null
+        },
+        "diff": "@@ -7,2 +7,3 @@\n import androidx.compose.ui.Modifier\n+import androidx.compose.ui.graphics.asAndroidBitmap\n import androidx.compose.ui.platform.LocalUriHandler\n@@ -37,3 +38,4 @@\n         val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()\n-        val screenshot = instrumentation.uiAutomation.takeScreenshot()\n+        // Capture our Compose surface without claiming Android's shared UiAutomation service.\n+        val screenshot = compose.onRoot().captureToImage().asAndroidBitmap()\n         java.io.File(instrumentation.targetContext.cacheDir, name).outputStream().use {\n"
+      }
+    ],
+    "status": "completed"
+  }
+]

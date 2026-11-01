@@ -558,6 +558,19 @@ class RelayBootstrapService(
             ?: throw RelayBootstrapException("The bridge returned invalid ChatGPT history.")
     }
 
+    suspend fun transcribeVoice(bytes: ByteArray, durationMs: Int): String {
+        require(durationMs in 1..150_000 && bytes.size <= 10 * 1024 * 1024) { "Voice clips must be 150 seconds or less and smaller than 10 MB." }
+        val session = requireActiveSession("Reconnect to your device to use voice mode.")
+        val id = "voice-${UUID.randomUUID()}"
+        val params = JSONObject().put("mimeType", "audio/wav").put("sampleRateHz", 24_000)
+            .put("durationMs", durationMs).put("audioBase64", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP))
+        sendEncryptedAppPayload(session, JSONObject().put("id", id).put("method", "voice/transcribe").put("params", params).toString())
+        val response = awaitEncryptedRpcResponse(session, id, timeoutMs = 180_000L)
+        response.optJSONObject("error")?.let { throw RelayBootstrapException(it.optString("message")) }
+        return response.optJSONObject("result")?.optString("text")?.trim()?.takeIf(String::isNotEmpty)
+            ?: throw RelayBootstrapException("Voice transcription did not return any text.")
+    }
+
     suspend fun readWorkspaceImage(path: String, cwd: String): ByteArray {
         val session = requireActiveSession("Connect to your Mac to preview this image.")
         val id = "workspace-image-${UUID.randomUUID()}"

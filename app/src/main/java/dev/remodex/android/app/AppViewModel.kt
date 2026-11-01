@@ -2072,13 +2072,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         bootstrapVerification = null
         liveThreadActionState = null
         runtimeAssistantEntriesByThreadId = emptyMap()
-        isShowingLiveThreads = false
+        // Retain the open transcript so recovery guidance can sit above its composer.
+        isShowingLiveThreads = savedRecord != null && selectedDetail != null
         pairingStatusMessage = PairingStatusMessage(
             tone = PairingStatusTone.Error,
             title = if (savedRecord != null && error.isRecoverableSessionLoss) "Live session lost" else "Live session ended",
             body = "${error.message ?: "The live session ended."} ${if (savedRecord != null) "Reconnect saved device to reopen." else ""}".trim(),
         )
-        snackbarMessage = error.message ?: "The live session ended."
+        if (!isShowingLiveThreads) snackbarMessage = error.message ?: "The live session ended."
     }
 
     private fun applyLiveThreadList(

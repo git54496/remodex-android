@@ -152,6 +152,11 @@ fun ConversationScreen(
     onStop: () -> Unit,
     onContinue: () -> Unit,
     onMenuClick: () -> Unit,
+    transcribeVoice: suspend (ByteArray, Int) -> String = { _, _ -> error("Voice transcription unavailable") },
+    hasSavedDevice: Boolean = false,
+    reconnecting: Boolean = false,
+    connectionError: String? = null,
+    onReconnect: () -> Unit = {},
     readWorkspaceImage: suspend (String) -> ByteArray = { error("Image preview unavailable") },
     canInteractWithMessages: Boolean = false,
     onSubmitAnswer: (String, List<String>) -> Unit = { _, _ -> },
@@ -208,8 +213,12 @@ fun ConversationScreen(
             )
         }
 
+        connectionRecovery(hasSavedDevice, isLive, reconnecting, connectionError)?.let {
+            ConnectionRecoveryCard(it, onReconnect)
+        }
         // Composer area
-        ComposerArea(
+        androidx.compose.runtime.key(summary.id) { ComposerArea(
+            transcribeVoice = transcribeVoice,
             draftMessage = draftMessage,
             isLive = isLive,
             isBusy = isBusy,
@@ -248,7 +257,7 @@ fun ConversationScreen(
             onSend = onSend,
             onStop = onStop,
             onContinue = onContinue,
-        )
+        ) }
     }
 }
 
@@ -606,6 +615,7 @@ private fun compactPreviewText(
 
 @Composable
 private fun ComposerArea(
+    transcribeVoice: suspend (ByteArray, Int) -> String,
     draftMessage: String,
     isLive: Boolean,
     isBusy: Boolean,
@@ -645,6 +655,9 @@ private fun ComposerArea(
     onStop: () -> Unit,
     onContinue: () -> Unit,
 ) {
+    val (voice, toggleVoice) = rememberVoiceInput(
+        transcribe = { clip -> transcribeVoice(clip.bytes, clip.durationMs) },
+        onTranscript = { text -> onDraftChange(appendVoiceTranscript(draftMessage, text)) })
     var controlsExpanded by rememberSaveable { mutableStateOf(false) }
     Surface(
         color = Color.White,
@@ -655,6 +668,7 @@ private fun ComposerArea(
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 8.dp),
         ) {
+            VoiceAccessory(voice, toggleVoice)
             IconButton(onClick = { controlsExpanded = !controlsExpanded }) {
                 Icon(Icons.Default.ChevronRight, if (controlsExpanded) "Hide composer controls" else "Show composer controls",
                     tint = InkSecondary, modifier = Modifier.rotate(if (controlsExpanded) 90f else 0f))
@@ -706,7 +720,9 @@ private fun ComposerArea(
                             )
                         }
 
-                        if (!controlsExpanded) IconButton(
+                        if (!controlsExpanded && (voice.recording || voice.transcribing || (!canStop && draftMessage.isBlank() && pendingAttachments.isEmpty()))) {
+                            VoiceButton(voice, isLive && !isBusy, toggleVoice)
+                        } else if (!controlsExpanded) IconButton(
                             onClick = if (canStop) onStop else onSend,
                             enabled = isLive && !isBusy && (canStop || draftMessage.isNotBlank() || pendingAttachments.isNotEmpty()),
                         ) { Icon(if (canStop) Icons.Default.Stop else Icons.Default.ArrowUpward,
@@ -714,6 +730,7 @@ private fun ComposerArea(
                     }
                     // Bottom bar: [+] [Model ▼] [Reasoning ▼]  Spacer  [Stop?] [Send]
                     if (controlsExpanded) ComposerBottomBar(
+                        voice = voice, onVoice = toggleVoice,
                         isLive = isLive,
                         isBusy = isBusy,
                         isSending = isSending,
@@ -769,6 +786,8 @@ private fun ComposerArea(
 
 @Composable
 private fun ComposerBottomBar(
+    voice: VoiceUiState,
+    onVoice: () -> Unit,
     isLive: Boolean,
     isBusy: Boolean,
     isSending: Boolean,
@@ -890,8 +909,10 @@ private fun ComposerBottomBar(
             }
         }
 
-        // Send / Continue button
-        IconButton(
+        // Empty drafts expose the microphone, as on iOS; transcripts stay editable.
+        if (voice.recording || voice.transcribing || (!shouldSend && !canStop)) {
+            VoiceButton(voice, isLive && !isBusy, onVoice)
+        } else IconButton(
             onClick = if (shouldSend) onSend else onContinue,
             enabled = isLive && !isBusy && (shouldSend || canContinue),
             modifier = Modifier.size(32.dp),

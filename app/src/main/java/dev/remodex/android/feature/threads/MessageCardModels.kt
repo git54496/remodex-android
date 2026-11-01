@@ -7,24 +7,6 @@ import org.json.JSONObject
 
 internal fun TimelineEntry.payload(): JSONObject = runCatching { JSONObject(structuredPayload.orEmpty()) }.getOrDefault(JSONObject())
 private fun JSONArray?.objects() = (0 until (this?.length() ?: 0)).mapNotNull { this?.optJSONObject(it) }
-internal data class FileChangeRow(val path: String, val action: String, val diff: String) {
-    val additions get() = diff.lineSequence().count { it.startsWith("+") && !it.startsWith("+++") }
-    val deletions get() = diff.lineSequence().count { it.startsWith("-") && !it.startsWith("---") }
-}
-internal fun fileChangeRows(entry: TimelineEntry): List<FileChangeRow> {
-    val changes = entry.payload().optJSONArray("changes").objects().mapNotNull {
-        val path = it.optString("path").takeIf(String::isNotBlank) ?: return@mapNotNull null
-        val kind = it.optJSONObject("kind")?.optString("type") ?: it.optString("kind")
-        FileChangeRow(path, when (kind.lowercase()) { "add", "create" -> "Added"; "delete", "remove" -> "Deleted"; else -> "Edited" }, it.optString("diff"))
-    }
-    if (changes.isNotEmpty()) return changes
-    val raw = entry.payload().optString("diff").ifBlank { entry.body }
-    return raw.split(Regex("(?m)(?=^diff --git )")).mapNotNull { block ->
-        val path = Regex("(?m)^\\+\\+\\+ b/(.+)$").find(block)?.groupValues?.get(1)
-            ?: Regex("(?m)^--- a/(.+)$").find(block)?.groupValues?.get(1) ?: return@mapNotNull null
-        FileChangeRow(path, if (block.contains("--- /dev/null")) "Added" else if (block.contains("+++ /dev/null")) "Deleted" else "Edited", block.trim())
-    }
-}
 internal data class AgentRow(val id: String, val name: String, val status: String, val prompt: String, val model: String, val message: String)
 private fun JSONObject.string(vararg keys: String): String = keys.firstNotNullOfOrNull { key ->
     opt(key)?.takeIf { it is String }?.toString()?.trim()?.takeIf(String::isNotEmpty)
