@@ -22,6 +22,16 @@ class MessageCardModelsTest {
         assertEquals("Ada", rows.first().name)
         assertEquals("Inspect tests", rows.last().prompt)
     }
+    @Test fun nativeRepliesBindByItemIdAndHideProtocolMarkup() {
+        val q = entry(TimelineEntryKind.Questions, """{"questions":[{"title":"Ready?"}]}""")
+        val raw = "<send_user_message_question_reply>\n" + """[{"questionItemId":"[\"request_user_input_async\",\"id\",0]","question":"Ready?","answer":"Yes"}]""" + "\n</send_user_message_question_reply>"
+        val user = TimelineEntry("u", "You", "Now", raw)
+        val rows = resolveQuestionAnswers(listOf(q, user))
+        assertEquals("Yes", questionRows(rows.first()).single().answer)
+        assertEquals("Ready?\nYes", rows.last().body)
+        assertNull(questionRows(resolveQuestionAnswers(listOf(q.copy(id = "another"), user)).first()).single().answer)
+    }
+
     @Test fun questionsResolveOnlyCanonicalAnswerAndRemainVisible() {
         val q = entry(TimelineEntryKind.Questions, """{"delivery":"async","questions":[{"title":"Which?","options":["A","B"]},{"title":"Why?","options":null}]}""")
         val user = TimelineEntry("u", "You", "Now", "Which?\nA\n\nWhy?\nUseful")

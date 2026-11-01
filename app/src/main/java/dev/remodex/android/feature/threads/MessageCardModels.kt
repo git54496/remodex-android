@@ -67,7 +67,7 @@ internal fun questionRows(entry: TimelineEntry): List<QuestionRow> {
     }.filter { it.title.isNotBlank() }
 }
 /** Async answers are ordinary user messages containing each question and answer, as on iOS. */
-internal fun resolveQuestionAnswers(entries: List<TimelineEntry>): List<TimelineEntry> = entries.mapIndexed { index, entry ->
+private fun resolveFormattedQuestionAnswers(entries: List<TimelineEntry>): List<TimelineEntry> = entries.mapIndexed { index, entry ->
     if (entry.kind != TimelineEntryKind.Questions) return@mapIndexed entry
     val questions = questionRows(entry)
     if (questions.isEmpty()) return@mapIndexed entry
@@ -85,4 +85,39 @@ internal fun resolveQuestionAnswers(entries: List<TimelineEntry>): List<Timeline
         remaining = remaining.drop(split).trimStart()
     }
     if (answers.any(String::isBlank)) entry else entry.copy(structuredPayload = entry.payload().put("resolvedAnswers", JSONArray(answers)).toString())
+}
+
+private data class NativeQuestionReply(val itemId: String, val rows: List<Pair<String, String>>)
+private fun nativeQuestionReply(text: String): NativeQuestionReply? = runCatching {
+    val start = "<send_user_message_question_reply>\n"
+    val end = "\n</send_user_message_question_reply>"
+    require(text.startsWith(start) && text.endsWith(end))
+    val rows = JSONArray(text.removePrefix(start).removeSuffix(end)).objects()
+    require(rows.isNotEmpty())
+    val decoded = rows.map { row ->
+        val key = JSONArray(row.getString("questionItemId"))
+        require(key.length() == 3 && key.getString(0) == "request_user_input_async")
+        Triple(key.getString(1), key.getInt(2), row.getString("question") to row.getString("answer"))
+    }.sortedBy { it.second }
+    val id = decoded.first().first
+    require(decoded.withIndex().all { (index, row) -> row.first == id && row.second == index && row.third.first.isNotBlank() && row.third.second.isNotBlank() })
+    NativeQuestionReply(id, decoded.map { it.third })
+}.getOrNull()
+
+internal fun resolveQuestionAnswers(entries: List<TimelineEntry>): List<TimelineEntry> {
+    val resolved = entries.toMutableList()
+    entries.forEachIndexed { index, entry ->
+        if (!entry.speaker.equals("You", true)) return@forEachIndexed
+        val reply = nativeQuestionReply(entry.body) ?: return@forEachIndexed
+        resolved[index] = entry.copy(body = reply.rows.joinToString("\n\n") { "${it.first}\n${it.second}" })
+        val target = (index - 1 downTo 0).firstOrNull { resolved[it].kind == TimelineEntryKind.Questions && resolved[it].id == reply.itemId }
+        if (target != null && questionRows(resolved[target]).map { it.title } == reply.rows.map { it.first }) {
+            resolved[target] = resolved[target].copy(structuredPayload = resolved[target].payload().put("resolvedAnswers", JSONArray(reply.rows.map { it.second })).toString())
+        }
+    }
+    // Native replies must not be rebound by title to a different question item.
+    val formatted = resolveFormattedQuestionAnswers(resolved.mapIndexed { index, entry ->
+        if (nativeQuestionReply(entries[index].body) != null) entry.copy(speaker = "Native answer") else entry
+    })
+    return formatted.mapIndexed { index, entry -> entry.copy(speaker = entries[index].speaker) }
 }
