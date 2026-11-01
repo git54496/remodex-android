@@ -31,6 +31,11 @@ class ConversationCacheTest {
         assertFalse(rows.any { it.previousMessages })
     }
 
+    @Test fun activeTurnOverridesStaleCompletedHistory() {
+        val rows = projectTimeline(listOf(entry("progress"), entry("tool", TimelineEntryKind.ToolActivity), entry("final")), runningTurnId = "t")
+        assertFalse(rows.any { it.previousMessages })
+    }
+
     @Test fun streamingToolsAndAttachmentsStayVisible() {
         val image = entry("image").copy(attachments = listOf(ImageAttachment("i", "uri")))
         val rows = projectTimeline(listOf(entry("tool", TimelineEntryKind.ToolActivity).copy(isStreaming = true), image, entry("final")))

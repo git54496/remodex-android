@@ -45,7 +45,8 @@ internal fun decodeConversationSnapshot(raw: String): ConversationSnapshot {
     val summaries = json.getJSONArray("summaries").objects().map(::decodeThreadSummary)
     val details = json.getJSONArray("details").objects().map(::decodeThreadDetail).map {
         it.copy(status = if (it.status == ThreadStatus.Running) ThreadStatus.Waiting else it.status, activeTurnId = null, hasInterruptibleTurnWithoutId = false,
-            entries = it.entries.map { entry -> entry.copy(isStreaming = false) })
+            entries = it.entries.map { entry -> entry.copy(isStreaming = false,
+                turnCompleted = entry.turnCompleted && !(it.isRunning && entry.turnId == (it.activeTurnId ?: it.latestTurnId))) })
     }.associateBy { it.threadId }
     return ConversationSnapshot(summaries.map { it.copy(status = if (it.status == ThreadStatus.Running) ThreadStatus.Waiting else it.status) }, details)
 }

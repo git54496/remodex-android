@@ -155,7 +155,10 @@ fun ConversationScreen(
     val activePlanEntry = timelineEntries.lastOrNull { entry ->
         entry.kind == TimelineEntryKind.Plan && (entry.body.isNotBlank() || entry.planSteps.isNotEmpty())
     }
-    val visibleEntries = remember(timelineEntries, activePlanEntry) { projectTimeline(timelineEntries.filterNot { it.id == activePlanEntry?.id }) }
+    val visibleEntries = remember(timelineEntries, activePlanEntry, detail.isRunning, detail.activeTurnId, detail.latestTurnId) {
+        projectTimeline(timelineEntries.filterNot { it.id == activePlanEntry?.id },
+            if (detail.isRunning) detail.activeTurnId ?: detail.latestTurnId ?: timelineEntries.lastOrNull()?.turnId else null)
+    }
 
     Column(
         modifier = modifier.fillMaxSize(),
