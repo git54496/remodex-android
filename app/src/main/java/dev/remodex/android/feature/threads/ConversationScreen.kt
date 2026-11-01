@@ -148,6 +148,10 @@ fun ConversationScreen(
     onStop: () -> Unit,
     onContinue: () -> Unit,
     onMenuClick: () -> Unit,
+    canInteractWithMessages: Boolean = false,
+    onSubmitAnswer: (String, List<String>) -> Unit = { _, _ -> },
+    onReviewAnswer: (String) -> Unit = {},
+    onOpenAgent: (String, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val isBusy = isSending || isStopping || isContinuing
@@ -187,7 +191,10 @@ fun ConversationScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(visibleEntries, key = { it.id }) { entry ->
-                ProjectedTimelineRow(entry)
+                androidx.compose.runtime.CompositionLocalProvider(LocalMessageInteractions provides
+                    MessageInteractions(canInteractWithMessages, onSubmitAnswer, onReviewAnswer, onOpenAgent)) {
+                    ProjectedTimelineRow(entry)
+                }
             }
         }
 

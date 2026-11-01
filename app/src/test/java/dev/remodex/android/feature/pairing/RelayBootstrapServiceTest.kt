@@ -18,6 +18,29 @@ class RelayBootstrapServiceTest {
     private val fixedNow = Instant.parse("2026-03-26T20:00:00Z")
 
     @Test
+    fun questionAnswersSteerRunningTurnsAndStartCompletedTurns() = runBlocking {
+        for (running in listOf(true, false)) {
+            val identity = RelaySecureCrypto.generatePhoneIdentity()
+            val payload = PairingQrPayload(2, "wss://example.com/relay", "session-123", "mac-device-1", identity.publicKeyBase64, 1_900_000_000_000L)
+            val factory = SuccessfulRelaySocketFactory(payload, identity,
+                initialLiveThreadStatus = if (running) "running" else "completed",
+                initialTurnStatus = if (running) "running" else "completed")
+            val service = RelayBootstrapService(socketFactory = factory, now = { fixedNow })
+            service.bootstrap(payload) {}
+            var dispatches = 0
+            assertNull(service.submitQuestionAnswer("live-thread-1", "Ready?\nYes", "answer-client-id", "~/work/live-project",
+                null, null, null, AccessMode.OnRequest) { dispatches++ })
+            assertEquals(1, dispatches)
+            assertEquals(if (running) "turn/steer" else "turn/start", factory.lastAnswerMethod)
+            val params = factory.lastAnswerParams!!
+            assertEquals("answer-client-id", params.getString("clientUserMessageId"))
+            assertEquals("Ready?\nYes", params.getJSONArray("input").getJSONObject(0).getString("text"))
+            if (running) assertEquals("turn-1", params.getString("expectedTurnId"))
+            service.disconnectActiveSession()
+        }
+    }
+
+    @Test
     fun completesSecureBootstrapAgainstMatchingBridgeMessages() = runBlocking {
         val bridgeIdentity = RelaySecureCrypto.generatePhoneIdentity()
         val payload = PairingQrPayload(
@@ -999,6 +1022,8 @@ private class SuccessfulRelaySocketFactory(
     private val threadListParentThreadId: String? = null,
 ) : RelaySocketFactory {
     private val fixedNow = Instant.parse("2026-03-26T20:00:00Z")
+    var lastAnswerMethod: String? = null
+    var lastAnswerParams: JSONObject? = null
     var connectedUrl: String? = null
     var connectedHeaders: Map<String, String> = emptyMap()
     var receivedReplayEpoch: String? = null
@@ -1249,7 +1274,14 @@ private class SuccessfulRelaySocketFactory(
         val payloadText = decryptPhoneEnvelope(envelope, session) ?: error("Expected phone payload")
         val payloadJson = JSONObject(payloadText)
         val method = payloadJson.optString("method")
+        if (payloadJson.optJSONObject("params")?.has("clientUserMessageId") == true) {
+            lastAnswerMethod = method
+            lastAnswerParams = payloadJson.getJSONObject("params")
+        }
         when (method) {
+            "turn/steer" -> {
+                sendEncryptedPayload(listener, session, JSONObject().put("id", payloadJson.getString("id")).put("result", JSONObject().put("turnId", "turn-1")))
+            }
             "initialize" -> {
                 didReceiveInitializeRequest = true
                 val response = JSONObject()

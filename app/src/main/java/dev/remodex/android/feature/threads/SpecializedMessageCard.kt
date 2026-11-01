@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
@@ -25,7 +26,7 @@ internal fun SpecializedMessageCard(entry: TimelineEntry) {
     var selectedDiff by remember(entry.id) { mutableStateOf<FileChangeRow?>(null) }
     val files = remember(entry) { fileChangeRows(entry) }
     val agents = remember(entry) { agentRows(entry) }
-    val questions = remember(entry) { questionRows(entry) }
+    val questionState = rememberSaveableStateHolder()
     val title = when (entry.kind) {
         TimelineEntryKind.FileChange -> if (files.isEmpty()) "File changes" else "${files.size} file${if (files.size == 1) "" else "s"} changed"
         TimelineEntryKind.SubagentAction -> entry.title ?: "Agents"
@@ -58,14 +59,7 @@ internal fun SpecializedMessageCard(entry: TimelineEntry) {
                     agents.forEach { agent -> AgentDetails(agent) }
                 }
                 TimelineEntryKind.Questions -> {
-                    if (questions.isEmpty()) Text(entry.body)
-                    questions.forEach { question ->
-                        Text(question.title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                        if (question.answer != null) Text(question.answer, style = MaterialTheme.typography.bodyLarge)
-                        else question.options.forEach { Text("○  $it", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    }
-                    val answered = questions.isNotEmpty() && questions.all { it.answer != null }
-                    Text(if (answered) "✓  Answered" else "Awaiting answer", color = if (answered) Color(0xFF27834B) else MaterialTheme.colorScheme.onSurfaceVariant)
+                    questionState.SaveableStateProvider(entry.id) { QuestionsForm(entry) }
                 }
                 else -> Unit
             }
@@ -91,10 +85,12 @@ internal fun SpecializedMessageCard(entry: TimelineEntry) {
 
 @Composable
 private fun AgentDetails(agent: AgentRow) {
+    val actions = LocalMessageInteractions.current
     var expanded by rememberSaveable(agent.id) { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
         Text("${agent.name}  ·  ${agent.status}", fontWeight = FontWeight.Medium,
-            modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(vertical = 8.dp))
+            modifier = Modifier.fillMaxWidth().clickable { actions.openAgent(agent.id, agent.name) }.padding(vertical = 8.dp))
+        TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide details" else "Details") }
         if (expanded) {
             if (agent.model.isNotBlank()) Text("Model: ${agent.model}", style = MaterialTheme.typography.labelMedium)
             if (agent.prompt.isNotBlank()) Text(agent.prompt, style = MaterialTheme.typography.bodyMedium)

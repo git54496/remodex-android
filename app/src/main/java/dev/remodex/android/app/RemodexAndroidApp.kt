@@ -492,6 +492,10 @@ fun MainContent(
                     onStop = { vm.stopTurn() },
                     onContinue = { vm.continueTurn() },
                     onMenuClick = onOpenDrawer,
+                    canInteractWithMessages = vm.canInteractWithMessages,
+                    onSubmitAnswer = vm::submitQuestionAnswer,
+                    onReviewAnswer = vm::reviewQuestionAnswer,
+                    onOpenAgent = vm::openAgentThread,
                     modifier = modifier,
                 )
             } else {

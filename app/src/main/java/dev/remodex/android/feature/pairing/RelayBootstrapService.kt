@@ -823,6 +823,32 @@ class RelayBootstrapService(
         return null
     }
 
+    /** One dispatch only. Transport failures are ambiguous and must not be replayed. */
+    suspend fun submitQuestionAnswer(
+        threadId: String, text: String, clientId: String, projectPath: String?,
+        model: String?, effort: String?, serviceTier: String?, accessMode: AccessMode,
+        onDispatch: () -> Unit,
+    ): String? {
+        val session = requireActiveSession("Reconnect before answering.")
+        val current = fetchThreadDetail(threadId)
+        val turnId = current.activeTurnId
+        if (current.isRunning && turnId == null) return "The turn is starting. Please retry in a moment."
+        if (!current.isRunning) ensureThreadResumed(session, threadId, projectPath)
+        val params = if (current.isRunning) JSONObject().put("threadId", threadId)
+            .put("expectedTurnId", turnId).put("input", buildTurnInputPayload(text, emptyList(), "imageUrl"))
+        else buildTurnStartParams(threadId, text, emptyList(), model, effort, serviceTier, accessMode, null,
+            accessMode.approvalPolicyCandidates.first(), SandboxSendMode.Modern, false, "imageUrl")
+        params.put("clientUserMessageId", clientId)
+        val requestId = "answer-${UUID.randomUUID()}"
+        val request = JSONObject().put("id", requestId).put("method", if (current.isRunning) "turn/steer" else "turn/start").put("params", params)
+        onDispatch()
+        sendEncryptedAppPayload(session, request.toString())
+        val response = awaitEncryptedRpcResponse(session, requestId)
+        response.optJSONObject("error")?.let { return it.optString("message").ifBlank { "Answer rejected. Please retry." } }
+        if (!response.has("result")) throw RelayBootstrapException("Answer confirmation was incomplete.")
+        return null
+    }
+
     suspend fun sendTurnStart(
         threadId: String,
         userInput: String,

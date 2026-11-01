@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.sample
 import dev.remodex.android.feature.threads.ConversationCacheStore
 import dev.remodex.android.feature.threads.ConversationSnapshot
+import dev.remodex.android.feature.threads.*
+import java.util.UUID
 import android.app.Application
 import android.net.Uri
 import android.os.SystemClock
@@ -324,6 +326,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val deviceHistoryStore = SharedPrefsDeviceHistoryStore(application)
     private val liveThreadSessionStore = SharedPrefsLiveThreadSessionStore(application)
     private val runtimeConfigStore = SharedPrefsRuntimeConfigStore(application)
+    private val questionSubmissionStore = QuestionSubmissionStore(application)
+    private var questionSubmissions by mutableStateOf(questionSubmissionStore.read())
+    private var openedAgentSummaries = emptyMap<String, ThreadSummary>()
+    val canInteractWithMessages: Boolean get() = relayBootstrapService.hasActiveSession()
     private val conversationCacheStore = ConversationCacheStore(application)
     private var cacheHost: String? = null
     private val imageAttachmentCacheStore = SharedPrefsImageAttachmentCacheStore(application)
@@ -852,7 +858,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         get() = selectedThreadId?.let { id -> threadSummaries.firstOrNull { it.id == id } }
 
     val selectedDetail: ThreadDetail?
-        get() = selectedThreadId?.let { threadDetails[it] }
+        get() = selectedThreadId?.let { id -> threadDetails[id]?.let { detail ->
+            detail.copy(entries = resolveQuestionAnswers(detail.entries).map { entry ->
+                withQuestionSubmission(entry, questionSubmissions[questionKey(id, entry.id)])
+            })
+        } }
 
     val isSendingTurn: Boolean
         get() = liveThreadActionState?.threadId == selectedThreadId &&
@@ -879,7 +889,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun restoreConversationCache(host: String) {
         val snapshot = conversationCacheStore.read(host)
+        if (cacheHost != host) openedAgentSummaries = emptyMap()
         cacheHost = host
+        openedAgentSummaries = snapshot.summaries.filter { it.parentThreadId != null }.associateBy { it.id }
         threadDetails = snapshot.details
         if (snapshot.summaries.isNotEmpty()) {
             threadSummaries = applyLocalThreadSessionState(snapshot.summaries, liveThreadSessionStore.read())
@@ -1554,6 +1566,75 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun questionKey(threadId: String, itemId: String): String =
+        JSONArray(listOf(cacheHost.orEmpty(), threadId, itemId)).toString()
+
+    fun submitQuestionAnswer(itemId: String, answers: List<String>) {
+        val threadId = selectedThreadId ?: return
+        val host = cacheHost
+        val entry = selectedDetail?.entries?.firstOrNull { it.id == itemId } ?: return
+        val key = questionKey(threadId, itemId)
+        if (questionRows(entry).isEmpty() || questionRows(entry).all { it.answer != null } ||
+            questionSubmissions[key]?.status in setOf("sending", "uncertain", "answered")) return
+        if (!canInteractWithMessages) { snackbarMessage = "Reconnect before answering."; return }
+        val text = runCatching { questionResponseText(entry, answers) }.getOrElse { return }
+        val summary = selectedThread ?: return
+        val model = effectiveModelIdentifier
+        val effort = selectedReasoningEffort ?: effectiveReasoningEffort
+        val tier = selectedServiceTier?.wireValue
+        val access = selectedAccessMode
+        val record = QuestionSubmission(answers.map(String::trim), "sending", UUID.randomUUID().toString())
+        fun update(value: QuestionSubmission) {
+            questionSubmissionStore.write(key, value)
+            questionSubmissions = questionSubmissions + (key to value)
+        }
+        if (runCatching { update(record) }.isFailure) {
+            snackbarMessage = "Could not save the answer. Please try again."
+            return
+        }
+        viewModelScope.launch {
+            var dispatched = false
+            try {
+                val rejection = withRelayRequestLock {
+                    check(cacheHost == host) { "The connected device changed. Please retry." }
+                    relayBootstrapService.submitQuestionAnswer(threadId, text, record.clientId, summary.projectPath,
+                        model, effort, tier, access) {
+                        check(cacheHost == host) { "The connected device changed. Please retry." }
+                        dispatched = true
+                    }
+                }
+                update(record.copy(status = if (rejection == null) "answered" else "failed", error = rejection.orEmpty()))
+            } catch (error: Exception) {
+                update(record.copy(status = if (dispatched) "uncertain" else "failed",
+                    error = if (dispatched) "Delivery could not be confirmed. Check the conversation before retrying." else error.message.orEmpty()))
+            } finally {
+                restartLiveThreadSyncLoop(immediate = true)
+            }
+        }
+    }
+
+    fun reviewQuestionAnswer(itemId: String) {
+        val id = selectedThreadId ?: return
+        val key = questionKey(id, itemId)
+        val old = questionSubmissions[key] ?: return
+        if (old.status != "uncertain") return
+        val reviewed = old.copy(status = "failed", error = "Review your answer, then submit again if needed.")
+        questionSubmissionStore.write(key, reviewed)
+        questionSubmissions = questionSubmissions + (key to reviewed)
+    }
+
+    fun openAgentThread(threadId: String, name: String) {
+        val id = threadId.trim().takeIf { it.isNotEmpty() } ?: return
+        val parent = selectedThread ?: return
+        if (threadSummaries.none { it.id == id }) {
+            val summary = ThreadSummary(id, name.ifBlank { "Agent" }, parent.projectPath, ThreadStatus.Waiting, "", "Now", parentThreadId = parent.id)
+            openedAgentSummaries = openedAgentSummaries + (id to summary)
+            threadSummaries = threadSummaries + summary
+        }
+        selectThread(id)
+        selectionLockThreadId = id
+    }
+
     fun sendTurn() {
         val threadId = selectedThreadId ?: return
         val message = draftMessage.trim()
@@ -2021,7 +2102,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
             else -> mergedThreads
         }
-        val decoratedThreads = applyLocalThreadSessionState(liveThreadsWithPending, sessionState)
+        val decoratedThreads = applyLocalThreadSessionState(liveThreadsWithPending + openedAgentSummaries.values.filter { agent -> liveThreadsWithPending.none { it.id == agent.id } }, sessionState)
         val merged = overlayThreadSummaryStatuses(decoratedThreads, threadDetails, liveThreadStatusOverrides)
         threadSummaries = merged
         val recovered = resolveRecoveredSelectedThreadId(

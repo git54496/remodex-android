@@ -22,7 +22,7 @@ class MessageCardsUiTest {
     }
     @Test fun subagentDetailsExpand() {
         show(TimelineEntryKind.SubagentAction, """{"receiverThreadIds":["agent-a"],"agentNickname":"Ada","status":"completed","prompt":"Review the cache","model":"test-model"}""")
-        compose.onNodeWithText("Ada  ·  completed").performClick()
+        compose.onNodeWithText("Details").performClick()
         compose.onNodeWithText("Review the cache").assertIsDisplayed()
         compose.onNodeWithText("Model: test-model").assertIsDisplayed()
     }
