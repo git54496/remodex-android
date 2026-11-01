@@ -42,6 +42,52 @@ class MarkdownBodyUiTest {
         screenshot.recycle()
     }
 
+    private fun assertBoldText(text: String, bold: String) {
+        val rendered = compose.onNodeWithText(text, substring = true).fetchSemanticsNode()
+            .config[SemanticsProperties.Text].single()
+        assertFalse(rendered.text.contains("**"))
+        assertTrue(rendered.spanStyles.any {
+            it.item.fontWeight == FontWeight.Bold && rendered.text.substring(it.start, it.end) == bold
+        })
+    }
+
+    @Test fun chinesePunctuationRendersBoldInProseAndTables() {
+        show("**验证限制：**本次\n\n这是**“重点”**说明\n\n| 内容 |\n| --- |\n| **表格：**正常 |")
+        awaitText("表格：正常")
+        assertBoldText("验证限制：本次", "验证限制：")
+        assertBoldText("这是“重点”说明", "“重点”")
+        assertBoldText("表格：正常", "表格：")
+        compose.onNodeWithTag("assistant-prose").assertWidthIsEqualTo(300.dp)
+        capture("markdown-cjk.png")
+    }
+
+    @Test fun streamingChineseBoldAppearsWhenClosingMarkersArrive() {
+        var source by mutableStateOf("**验证限制：")
+        compose.setContent { MaterialTheme { AssistantMessageContent(reply(source).copy(isStreaming = true)) } }
+        awaitText("**验证限制：")
+        compose.runOnIdle { source += "**本次" }
+        awaitText("验证限制：本次")
+        assertBoldText("验证限制：本次", "验证限制：")
+        compose.onNodeWithText("**验证限制：").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Copy reply").assertDoesNotExist()
+    }
+
+    @Test fun chineseBoldCopyKeepsOriginalMarkdownWithoutInjectedCharacters() {
+        val source = "**验证限制：**本次，这是**“重点”**说明。"
+        show(source)
+        awaitText("验证限制：本次，这是“重点”说明。")
+        val context = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext
+        val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+        var previous: android.content.ClipData? = null
+        compose.runOnIdle { previous = clipboard.primaryClip }
+        try {
+            compose.onNodeWithContentDescription("Copy reply").performClick()
+            compose.runOnIdle { assertEquals(source, clipboard.primaryClip?.getItemAt(0)?.text?.toString()) }
+        } finally {
+            compose.runOnIdle { previous?.let(clipboard::setPrimaryClip) ?: clipboard.clearPrimaryClip() }
+        }
+    }
+
     @Test fun tableScrollsAndLongCellsWrapInsideFlatReply() {
         val longCell = "This cell contains enough words to wrap across several lines without losing any content."
         show("| Device | Notes | Status |\n| --- | --- | --- |\n| Android | $longCell | Ready |")

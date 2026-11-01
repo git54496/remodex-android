@@ -43,7 +43,6 @@ import com.mikepenz.markdown.model.markdownPadding
 import dev.remodex.android.ui.theme.Copper
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.conflate
-import org.intellij.markdown.flavours.gfm.GFMFlavourDescriptor
 import org.intellij.markdown.parser.MarkdownParser
 
 /** Shared renderer for replies and expanded message details; the caller owns the bubble/card. */
@@ -61,7 +60,7 @@ internal fun MarkdownBody(
     val latestText by rememberUpdatedState(text)
     val parsed by produceState<State?>(initialValue = null) {
         snapshotFlow { latestText }.conflate().collect { content ->
-            val flavour = GFMFlavourDescriptor()
+            val flavour = CjkMarkdownFlavour()
             value = MarkdownState(Input(content, true, flavour, MarkdownParser(flavour), ReferenceLinkHandlerImpl())).parse()
         }
     }
